@@ -34,9 +34,9 @@ class BleGatewayClient(
 
     companion object {
         private const val TAG = "BleWearClient"
-        val AIP_SERVICE_UUID: UUID = UUID.fromString("0000aip3-0000-1000-8000-00805f9b34fb")
-        val RX_UUID: UUID = UUID.fromString("0000aip3-0001-1000-8000-00805f9b34fb")
-        val TX_UUID: UUID = UUID.fromString("0000aip3-0002-1000-8000-00805f9b34fb")
+        val AIP_SERVICE_UUID: UUID = UUID.fromString("0000a1b3-0000-1000-8000-00805f9b34fb")
+        val RX_UUID: UUID = UUID.fromString("0000a1b3-0001-1000-8000-00805f9b34fb")
+        val TX_UUID: UUID = UUID.fromString("0000a1b3-0002-1000-8000-00805f9b34fb")
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         private const val SCAN_TIMEOUT_MS = 15000L
         private const val MTU_SIZE = 512

@@ -490,18 +490,14 @@ class GalaxyWearApplication : Application() {
             }
         }
     }
-}
 
-/**
- * LOW-FIX: Update the mesh device list from gateway state-sync payload.
- * Called when a device_list or state_event message is received.
- * Delegates to DeviceRepository for clean architecture.
- */
-fun updateDeviceList(newDevices: List<Device>) {
-    deviceRepository.updateDeviceList(newDevices)
-}
+    /** Update mesh device list from gateway state-sync payload */
+    fun updateDeviceList(newDevices: List<Device>) {
+        deviceRepository.updateDeviceList(newDevices)
+    }
 
-/** Mark all remote devices as offline (called on disconnect) */
-fun markDevicesOffline() {
-    deviceRepository.markAllOffline()
+    /** Mark all remote devices as offline (called on disconnect) */
+    fun markDevicesOffline() {
+        deviceRepository.markAllOffline()
+    }
 }

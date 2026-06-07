@@ -102,7 +102,8 @@ class MqttGatewayClient(
                 ?.payload(json.toByteArray())
                 ?.qos(MqttQos.AT_LEAST_ONCE)
                 ?.send()
-                ?.get() // W8-FIX: wait for publish to actually complete before returning
+            // FIX: Remove .get() to avoid blocking IO thread.
+            // HiveMQ async client handles delivery guarantee via AT_LEAST_ONCE QoS.
             true
         } catch (e: Exception) {
             Log.e(TAG, "Send failed: ${e.message}")
