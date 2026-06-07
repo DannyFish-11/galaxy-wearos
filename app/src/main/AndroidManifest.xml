@@ -134,5 +134,12 @@
                 android:resource="@drawable/tile_preview" />
         </service>
 
+        <!-- Side button receiver: double-tap/long-press → voice -->
+        <receiver android:name=".service.WatchButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.KEY_EVENT"/>
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>
