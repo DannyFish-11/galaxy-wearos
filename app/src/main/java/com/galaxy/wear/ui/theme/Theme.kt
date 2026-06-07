@@ -1,36 +1,35 @@
 package com.galaxy.wear.ui.theme
 
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Color
 import androidx.wear.compose.material.Colors
 import androidx.wear.compose.material.MaterialTheme
 
 /**
- * Galaxy Wear OS Theme
+ * Galaxy Wear Theme — PR-UI-V2
  *
- * Dark monochrome palette matching Desktop/Android v38:
- *   SILENT  → #000000
- *   LIMINAL → #808080
- *   MANIFEST → #E0E0E0
+ * 深色太空主题，黑白灰主调。
+ * 波形/光晕的星云蓝色通过 Color.kt 的 accent 常量直接使用，
+ * 不放在 theme 色板中（保持主界面纯黑白灰）。
  */
-private val GalaxyColorPalette = Colors(
-    primary = Color(0xFFE0E0E0),           // White (MANIFEST)
-    primaryVariant = Color(0xFF808080),     // Gray (LIMINAL)
-    secondary = Color(0xFF808080),
-    background = Color.Black,
-    surface = Color(0xFF111111),
-    error = Color(0xFFCF6679),
-    onPrimary = Color.Black,
-    onSecondary = Color.Black,
-    onBackground = Color(0xFFE0E0E0),
-    onSurface = Color(0xFFE0E0E0),
-    onError = Color.Black,
+private val GalaxyDarkColors = Colors(
+    primary = GrayManifest,          // #E0E0E0 亮灰（主交互色）
+    primaryVariant = GrayLiminal,    // #666666 中灰
+    secondary = WhiteSecondary,      // #8E8E93
+    secondaryVariant = WhiteSecondary,
+    background = SpaceBlack,         // #0A0A0F 深空黑
+    surface = SurfaceGlass,          // #14141C 玻璃面
+    error = ErrorRed,
+    onPrimary = SpaceBlack,          // 主色上的文字用深色
+    onSecondary = WhitePrimary,
+    onBackground = WhitePrimary,     // #F5F5F7 背景上的文字
+    onSurface = WhitePrimary,
+    onError = SpaceBlack,
 )
 
 @Composable
 fun GalaxyWearTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colors = GalaxyColorPalette,
+        colors = GalaxyDarkColors,
         typography = GalaxyTypography,
         content = content
     )
