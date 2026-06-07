@@ -14,104 +14,80 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
-import com.galaxy.wear.domain.model.Phase
+import com.galaxy.wear.Phase
+import com.galaxy.wear.ui.theme.*
 import kotlinx.coroutines.launch
 
 /**
- * LIQUID-ISLAND: Halo ring animation parameters
- * The halo breathes at different rates depending on phase.
- */
-private object HaloParams {
-    val SILENT_ALPHA = 0.0f      // Invisible
-    val LIMINAL_ALPHA_MIN = 0.15f // Breathing range
-    val LIMINAL_ALPHA_MAX = 0.45f
-    val MANIFEST_ALPHA = 0.7f    // Steady glow
-    val BREATH_DURATION_MS = 2000 // 2s breathing cycle
-    val PULSE_DURATION_MS = 150   // Quick pulse on message arrival
-    val STROKE_WIDTH_DP = 3f
-}
-
-/**
- * HomeScreen — Watch face-inspired main screen
+ * HomeScreen — PR-UI-V2: Watch face-inspired main screen
  *
- * Layout (centered, vertical):
- *   GALAXY title
- *   ┌─────────────┐
- *   │  ●  ●  ●    │  ← Phase dots (black/gray/white)
- *   └─────────────┘
- *   [Agent] [Voice] [Settings] ← Action chips
- *   SILENT / LIMINAL / MANIFEST label
+ * 三个功能入口:
+ *   [语音] → VoiceScreen (按住说话发指令)
+ *   [设备] → DevicesScreen (Galaxy Mesh 状态)
+ *   [设置] → SettingsScreen
  *
- * W4-FIX: Added isAmbient parameter to stop animations in Ambient mode.
- * W5-FIX: Added onRotaryScrollEvent for crown-based scrolling.
- * W9-FIX: Shared ScalingLazyListState between PositionIndicator and ScalingLazyColumn.
+ * 视觉:
+ *   - 深空黑底
+ *   - 呼吸 halo 环（黑白灰，无蓝色）
+ *   - 三个 CompactChip 入口
+ *   - 相位状态文字
  */
 @Composable
 fun HomeScreen(
     phase: Phase,
     isAmbient: Boolean = false,
-    onAgents: () -> Unit,
     onVoice: () -> Unit,
+    onDevices: () -> Unit,
     onSettings: () -> Unit,
 ) {
-    // W9-FIX: Shared list state — must be same instance for PositionIndicator and ScalingLazyColumn
     val listState = rememberScalingLazyListState(initialCenterItemIndex = 1)
-    // W5-FIX: Coroutine scope for rotary scroll animation
     val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     Scaffold(
         vignette = { Vignette(vignettePosition = VignettePosition.TopAndBottom) },
         positionIndicator = { PositionIndicator(scalingLazyListState = listState) }
     ) {
         ScalingLazyColumn(
-            // W4-FIX: Disable animations in Ambient mode to save battery
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black)
-                // W5-FIX: Handle rotary (crown) scroll events
+                .background(SpaceBlack)
                 .onRotaryScrollEvent { event ->
-                    coroutineScope.launch {
-                        listState.scrollBy(event.verticalScrollPixels)
-                    }
+                    coroutineScope.launch { listState.scrollBy(event.verticalScrollPixels) }
                     true
                 },
             horizontalAlignment = Alignment.CenterHorizontally,
             state = listState,
         ) {
-            // GALAXY Title
+            // ── GALAXY Title ─────────────────────────
             item {
                 Text(
                     text = "GALAXY",
                     style = MaterialTheme.typography.display3,
-                    color = Color(0xFFE0E0E0),
+                    color = WhitePrimary,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
                 )
             }
 
-            // Phase indicator dots (the three dots)
+            // ── Phase indicator dots (BLACK/WHITE/GRAY) ─
             item {
-                PhaseIndicatorDots(
-                    phase = phase,
-                    isAmbient = isAmbient,
-                    modifier = Modifier.padding(vertical = 12.dp)
-                )
+                PhaseDotsHome(phase = phase, isAmbient = isAmbient)
             }
 
-            // Phase status text
+            // ── Phase status text ────────────────────
             item {
                 val (label, color) = when (phase) {
-                    Phase.SILENT -> Pair("静默", Color(0xFF333333))
-                    Phase.LIMINAL -> Pair("临界", Color(0xFF808080))
-                    Phase.MANIFEST -> Pair("显现", Color(0xFFE0E0E0))
+                    Phase.SILENT -> Pair("静默", GraySilent)
+                    Phase.LIMINAL -> Pair("临界", GrayLiminal)
+                    Phase.MANIFEST -> Pair("显现", WhitePrimary)
                 }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
@@ -123,33 +99,21 @@ fun HomeScreen(
                     Text(
                         text = phase.name.uppercase(),
                         style = MaterialTheme.typography.caption3,
-                        color = color.copy(alpha = 0.6f),
+                        color = color.copy(alpha = 0.5f),
                         textAlign = TextAlign.Center,
                         modifier = Modifier.padding(top = 2.dp)
                     )
                 }
             }
 
-            // Action chips row
+            // ── Action chips row ─────────────────────
             item {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                 ) {
                     CompactChip(
-                        onClick = onAgents,
-                        label = { Text("设备", style = MaterialTheme.typography.caption2) },
-                        icon = {
-                            Icon(
-                                imageVector = androidx.compose.material.icons.Icons.Default.Devices,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        },
-                        colors = ChipDefaults.primaryChipColors()
-                    )
-                    CompactChip(
-                        onClick = onVoice,
+                        onClick = { triggerHaptic(context); onVoice() },
                         label = { Text("语音", style = MaterialTheme.typography.caption2) },
                         icon = {
                             Icon(
@@ -158,10 +122,22 @@ fun HomeScreen(
                                 modifier = Modifier.size(16.dp)
                             )
                         },
+                        colors = ChipDefaults.primaryChipColors()
+                    )
+                    CompactChip(
+                        onClick = { triggerHaptic(context); onDevices() },
+                        label = { Text("设备", style = MaterialTheme.typography.caption2) },
+                        icon = {
+                            Icon(
+                                imageVector = androidx.compose.material.icons.Icons.Default.Devices,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
                         colors = ChipDefaults.secondaryChipColors()
                     )
                     CompactChip(
-                        onClick = onSettings,
+                        onClick = { triggerHaptic(context); onSettings() },
                         label = { Text("设置", style = MaterialTheme.typography.caption2) },
                         icon = {
                             Icon(
@@ -177,9 +153,8 @@ fun HomeScreen(
         }
     }
 
-    // W4-FIX: Halo ring — always call PhaseHaloRing to maintain Compose call order,
-    // ambient mode handling is done inside the composable
-    val app = LocalContext.current.applicationContext as com.galaxy.wear.GalaxyWearApplication
+    // ── Halo ring (ambient, always rendered) ────
+    val app = context.applicationContext as com.galaxy.wear.GalaxyWearApplication
     val pulseTrigger by app.pulseTrigger.collectAsState()
     PhaseHaloRing(
         phase = phase,
@@ -189,208 +164,137 @@ fun HomeScreen(
     )
 }
 
-/**
- * Three-phase dot indicator — real-time animated
- *
- * W4-FIX: Stop pulse animations in Ambient mode to save battery.
- */
+// ═══════════════════════════════════════════════════════
+// Phase Dots — BLACK / WHITE / GRAY only
+// ═══════════════════════════════════════════════════════
 @Composable
-fun PhaseIndicatorDots(
-    phase: Phase,
-    isAmbient: Boolean = false,
-    modifier: Modifier = Modifier
-) {
+private fun PhaseDotsHome(phase: Phase, isAmbient: Boolean = false) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        modifier = modifier
-            .background(Color(0xFF111111), CircleShape)
+        modifier = Modifier
+            .background(SurfaceGlass, CircleShape)
             .padding(horizontal = 16.dp, vertical = 10.dp)
     ) {
-        Phase.values().forEach { p ->
-            val isActive = phase == p
-            val targetScale = if (isActive) 1.25f else 0.8f
-            val targetAlpha = if (isActive) 1.0f else 0.2f
+        // SILENT — dark gray
+        val silentScale by animateFloatAsState(
+            targetValue = if (phase == Phase.SILENT) 1.25f else 0.8f,
+            animationSpec = if (isAmbient) snap() else spring(stiffness = 300f, damping = 15f),
+            label = "dot_silent"
+        )
+        val silentAlpha by animateFloatAsState(
+            targetValue = if (phase == Phase.SILENT) 1.0f else 0.25f,
+            animationSpec = if (isAmbient) snap() else tween(300),
+            label = "alpha_silent"
+        )
+        val silentColor = if (phase == Phase.SILENT) GrayManifest else GraySilent
 
-            // W4-FIX: Skip animations in Ambient mode
-            val scale by animateFloatAsState(
-                targetValue = targetScale,
-                animationSpec = if (isAmbient) snap() else spring(stiffness = 300f, damping = 15f),
-                label = "dot_scale_$p"
-            )
+        // LIMINAL — medium gray (NOT amber)
+        val liminalScale by animateFloatAsState(
+            targetValue = if (phase == Phase.LIMINAL) 1.25f else 0.8f,
+            animationSpec = if (isAmbient) snap() else spring(stiffness = 300f, damping = 15f),
+            label = "dot_liminal"
+        )
+        val liminalAlpha by animateFloatAsState(
+            targetValue = if (phase == Phase.LIMINAL) 1.0f else 0.25f,
+            animationSpec = if (isAmbient) snap() else tween(300),
+            label = "alpha_liminal"
+        )
+        val liminalColor = if (phase == Phase.LIMINAL) GrayManifest else GrayLiminal
 
-            val color = when (p) {
-                Phase.SILENT -> if (isActive) Color(0xFF333333) else Color(0xFF1A1A1A)
-                Phase.LIMINAL -> if (isActive) Color(0xFF808080) else Color(0xFF333333)
-                Phase.MANIFEST -> if (isActive) Color(0xFFE0E0E0) else Color(0xFF444444)
-            }
+        // MANIFEST — bright white/gray
+        val manifestScale by animateFloatAsState(
+            targetValue = if (phase == Phase.MANIFEST) 1.25f else 0.8f,
+            animationSpec = if (isAmbient) snap() else spring(stiffness = 300f, damping = 15f),
+            label = "dot_manifest"
+        )
+        val manifestAlpha by animateFloatAsState(
+            targetValue = if (phase == Phase.MANIFEST) 1.0f else 0.25f,
+            animationSpec = if (isAmbient) snap() else tween(300),
+            label = "alpha_manifest"
+        )
+        val manifestColor = if (phase == Phase.MANIFEST) Color.White else GrayManifest
 
-            // W4-FIX: Disable LIMINAL pulse animation in Ambient mode
-            // FIXED: rememberInfiniteTransition moved outside condition — Compose requires consistent call order
-            val liminalPulseTransition = rememberInfiniteTransition(label = "liminal_pulse")
-            val liminalPulseAnim by liminalPulseTransition.animateFloat(
-                initialValue = 1f,
-                targetValue = if (isActive && p == Phase.LIMINAL) 1.6f else 1f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(900, easing = EaseInOutCubic),
-                    repeatMode = RepeatMode.Reverse
-                ),
-                label = "liminal_pulse"
-            )
-            val liminalPulse = if (isAmbient) 1f else liminalPulseAnim
+        // LIMINAL pulsing animation
+        val liminalPulseTransition = rememberInfiniteTransition(label = "liminal_pulse")
+        val liminalPulse by liminalPulseTransition.animateFloat(
+            initialValue = 1f,
+            targetValue = if (phase == Phase.LIMINAL && !isAmbient) 1.6f else 1f,
+            animationSpec = infiniteRepeatable(tween(900, easing = EaseInOutCubic), RepeatMode.Reverse),
+            label = "liminal_pulse"
+        )
 
-            val liminalAlphaTransition = rememberInfiniteTransition(label = "liminal_alpha")
-            val liminalAlphaAnim by liminalAlphaTransition.animateFloat(
-                initialValue = if (isActive && p == Phase.LIMINAL) 0.6f else targetAlpha,
-                targetValue = if (isActive && p == Phase.LIMINAL) 1.0f else targetAlpha,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(900, easing = EaseInOutCubic),
-                    repeatMode = RepeatMode.Reverse
-                ),
-                label = "liminal_alpha"
-            )
-            val liminalAlpha = if (isAmbient) targetAlpha else liminalAlphaAnim
+        // Draw dots
+        Box(Modifier.size(8.dp).scale(silentScale).background(silentColor.copy(alpha = silentAlpha), CircleShape))
 
-            Box(
-                modifier = Modifier
-                    .size(10.dp)
-                    .scale(scale * if (isActive && p == Phase.LIMINAL) liminalPulse else 1f)
-                    .background(
-                        color.copy(
-                            alpha = if (isActive && p == Phase.LIMINAL) liminalAlpha else targetAlpha
-                        ),
-                        CircleShape
-                    )
-            )
-        }
+        val liminalFinalScale = if (phase == Phase.LIMINAL && !isAmbient) liminalScale * liminalPulse else liminalScale
+        Box(Modifier.size(8.dp).scale(liminalFinalScale).background(liminalColor.copy(alpha = liminalAlpha), CircleShape))
+
+        Box(Modifier.size(8.dp).scale(manifestScale).background(manifestColor.copy(alpha = manifestAlpha), CircleShape))
     }
 }
 
-// ── LIQUID-ISLAND: Breathing Halo Ring (outer edge of watch face) ───────────
-
-/**
- * LIQUID-ISLAND: Breathing halo ring that encircles the watch face.
- *
- * - SILENT:  completely invisible (sleeping)
- * - LIMINAL: breathing gray glow (like a slow heartbeat)
- * - MANIFEST: steady white glow (awake and alert)
- *
- * When a message arrives, the halo "pulses" once (bright flash then decay),
- * giving tactile-like visual feedback even before the user reads the message.
- *
- * W4-FIX: Ambient mode suppresses drawing — the composable always runs to maintain Compose call order.
- */
+// ═══════════════════════════════════════════════════════
+// Phase Halo Ring (monochrome — no blue)
+// ═══════════════════════════════════════════════════════
 @Composable
 fun PhaseHaloRing(
     phase: Phase,
-    pulseTrigger: Int = 0,  // increment to trigger a one-shot pulse
-    isAmbient: Boolean = false,  // W4-FIX: When true, suppress drawing to save battery
+    pulseTrigger: Int,
+    isAmbient: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    // Base alpha animated by phase
-    val targetBaseAlpha = when (phase) {
-        Phase.SILENT -> HaloParams.SILENT_ALPHA
-        Phase.LIMINAL -> HaloParams.LIMINAL_ALPHA_MAX
-        Phase.MANIFEST -> HaloParams.MANIFEST_ALPHA
-    }
-
-    val baseAlpha by animateFloatAsState(
-        targetValue = if (isAmbient) 0f else targetBaseAlpha,
-        animationSpec = tween(durationMillis = 800, easing = EaseInOutCubic),
+    val haloAlpha by animateFloatAsState(
+        targetValue = when (phase) {
+            Phase.SILENT -> 0f
+            Phase.LIMINAL -> 0.3f
+            Phase.MANIFEST -> 0.5f
+        },
+        animationSpec = tween(800, easing = EaseInOutSine),
         label = "halo_alpha"
     )
-
-    // Breathing animation (only for LIMINAL, disabled in Ambient)
     val infiniteTransition = rememberInfiniteTransition(label = "halo_breath")
     val breathAlpha by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = if (!isAmbient && phase == Phase.LIMINAL) 1f else 0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(HaloParams.BREATH_DURATION_MS, easing = EaseInOutSine),
-            repeatMode = RepeatMode.Reverse
-        ),
+        initialValue = 0.15f,
+        targetValue = if (phase == Phase.LIMINAL && !isAmbient) 0.4f else 0.15f,
+        animationSpec = infiniteRepeatable(tween(2000, easing = EaseInOutSine), RepeatMode.Reverse),
         label = "halo_breath"
     )
-
-    // H6 FIX: One-shot pulse using Animatable instead of busy-wait while+delay loop
-    val pulseAnimatable = remember { androidx.compose.animation.core.Animatable(0f) }
+    val pulseScale = remember { Animatable(1f) }
     LaunchedEffect(pulseTrigger) {
-        if (!isAmbient && pulseTrigger > 0) {
-            pulseAnimatable.snapTo(0.8f)
-            pulseAnimatable.animateTo(
-                targetValue = 0f,
-                animationSpec = tween(
-                    durationMillis = HaloParams.PULSE_DURATION_MS,
-                    easing = EaseOutCubic
-                )
-            )
+        if (pulseTrigger > 0) {
+            pulseScale.snapTo(0.9f)
+            pulseScale.animateTo(1f, tween(150, easing = EaseOutCubic))
         }
     }
-    val pulseAlpha = pulseAnimatable.value
-
-    // Combine: base + breath + pulse
-    val finalAlpha = if (isAmbient) 0f else (baseAlpha +
-            breathAlpha * (HaloParams.LIMINAL_ALPHA_MAX - HaloParams.LIMINAL_ALPHA_MIN) +
-            pulseAlpha).coerceIn(0f, 1f)
-
-    // Halo color by phase
+    val finalAlpha = if (isAmbient) haloAlpha else haloAlpha * breathAlpha
     val haloColor = when (phase) {
-        Phase.SILENT -> Color(0xFF000000)
-        Phase.LIMINAL -> Color(0xFF808080)
-        Phase.MANIFEST -> Color(0xFFE0E0E0)
+        Phase.SILENT -> Color.Transparent
+        Phase.LIMINAL -> GrayLiminal
+        Phase.MANIFEST -> WhitePrimary.copy(alpha = 0.7f)
     }
 
-    Canvas(modifier = modifier.fillMaxSize()) {
-        if (finalAlpha > 0.01f) {
-            val strokeWidth = HaloParams.STROKE_WIDTH_DP.dp.toPx()
-            drawCircle(
-                color = haloColor.copy(alpha = finalAlpha),
-                radius = size.minDimension / 2f - strokeWidth / 2f,
-                center = center,
-                style = Stroke(width = strokeWidth)
-            )
-        }
+    Canvas(modifier = modifier.scale(pulseScale.value)) {
+        val cx = size.width / 2
+        val cy = size.height / 2
+        val r = (size.minDimension / 2) - 8.dp.toPx()
+        drawCircle(
+            color = haloColor.copy(alpha = finalAlpha),
+            radius = r,
+            center = Offset(cx, cy),
+            style = Stroke(width = 2.5f)
+        )
+        drawCircle(
+            color = haloColor.copy(alpha = finalAlpha * 0.5f),
+            radius = r + 4.dp.toPx(),
+            center = Offset(cx, cy),
+            style = Stroke(width = 1f)
+        )
     }
 }
 
-// ── LIQUID-ISLAND: Haptic Feedback Helpers ───────────────────────────────────
-
-/**
- * Trigger haptic feedback on the watch.
- *
- * - [HapticType.PHASE_CHANGE]: longer vibration for phase transitions
- * - [HapticType.TASK_DONE]: double-tap confirmation
- * - [HapticType.MESSAGE_ARRIVAL]: short tap for new messages
- */
-enum class HapticType {
-    PHASE_CHANGE,   // 200ms medium vibration
-    TASK_DONE,      // double-tap (50ms on, 50ms off, 50ms on)
-    MESSAGE_ARRIVAL,// 30ms short tap
-    ERROR,          // 60ms sharp vibration for failure feedback
-}
-
-/**
- * LIQUID-ISLAND: Trigger haptic feedback on the watch.
- *
- * This gives tactile confirmation of state changes and message arrivals,
- * so the user feels the system "responding" even before looking at the screen.
- */
-fun triggerHaptic(context: Context, type: HapticType) {
+// ── Haptic helper ────────────────────────────────────
+private fun triggerHaptic(context: Context) {
     val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-        ?: return
-
-    if (!vibrator.hasVibrator()) return
-
-    val effect = when (type) {
-        HapticType.PHASE_CHANGE ->
-            VibrationEffect.createOneShot(200L, VibrationEffect.DEFAULT_AMPLITUDE)
-        HapticType.TASK_DONE ->
-            VibrationEffect.createWaveform(longArrayOf(0, 50, 50, 50), -1)
-        HapticType.MESSAGE_ARRIVAL ->
-            VibrationEffect.createOneShot(30L, 80)
-        HapticType.ERROR ->
-            VibrationEffect.createWaveform(longArrayOf(0, 60, 80, 40), -1)
-    }
-
-    vibrator.vibrate(effect)
+    vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
 }
