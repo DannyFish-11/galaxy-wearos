@@ -28,16 +28,11 @@ import kotlinx.coroutines.launch
 /**
  * HomeScreen — PR-UI-V2: Watch face-inspired main screen
  *
- * 三个功能入口:
- *   [语音] → VoiceScreen (按住说话发指令)
- *   [设备] → DevicesScreen (Galaxy Mesh 状态)
- *   [设置] → SettingsScreen
+ * PR-CIRCULAR-FIX: Changed chip layout from horizontal Row (clips on round screen)
+ * to vertical Column (fits within circular display bounds).
  *
- * 视觉:
- *   - 深空黑底
- *   - 呼吸 halo 环（黑白灰，无蓝色）
- *   - 三个 CompactChip 入口
- *   - 相位状态文字
+ * Three entries: [语音] [设备] [设置] — vertically stacked, centered,
+ * each 0.6 fillMaxWidth to stay clear of circular edges.
  */
 @Composable
 fun HomeScreen(
@@ -73,7 +68,7 @@ fun HomeScreen(
                     style = MaterialTheme.typography.display3,
                     color = WhitePrimary,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                    modifier = Modifier.padding(top = 4.dp, bottom = 6.dp)
                 )
             }
 
@@ -92,25 +87,28 @@ fun HomeScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = label,
-                        style = MaterialTheme.typography.title2,
+                        style = MaterialTheme.typography.title3,
                         color = color,
                         textAlign = TextAlign.Center
                     )
                     Text(
                         text = phase.name.uppercase(),
                         style = MaterialTheme.typography.caption3,
-                        color = color.copy(alpha = 0.5f),
+                        color = color.copy(alpha = 0.4f),
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 2.dp)
+                        modifier = Modifier.padding(top = 1.dp)
                     )
                 }
             }
 
-            // ── Action chips row ─────────────────────
+            // ── Action chips — VERTICAL for circular screen ──
             item {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .padding(top = 12.dp, bottom = 8.dp)
+                        .fillMaxWidth(0.58f) // ← PR-CIRCULAR-FIX: stay inside round edges
                 ) {
                     CompactChip(
                         onClick = { triggerHaptic(context); onVoice() },
@@ -119,10 +117,11 @@ fun HomeScreen(
                             Icon(
                                 imageVector = androidx.compose.material.icons.Icons.Default.Mic,
                                 contentDescription = null,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(14.dp)
                             )
                         },
-                        colors = ChipDefaults.primaryChipColors()
+                        colors = ChipDefaults.primaryChipColors(),
+                        modifier = Modifier.fillMaxWidth()
                     )
                     CompactChip(
                         onClick = { triggerHaptic(context); onDevices() },
@@ -131,10 +130,11 @@ fun HomeScreen(
                             Icon(
                                 imageVector = androidx.compose.material.icons.Icons.Default.Devices,
                                 contentDescription = null,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(14.dp)
                             )
                         },
-                        colors = ChipDefaults.secondaryChipColors()
+                        colors = ChipDefaults.secondaryChipColors(),
+                        modifier = Modifier.fillMaxWidth()
                     )
                     CompactChip(
                         onClick = { triggerHaptic(context); onSettings() },
@@ -143,10 +143,11 @@ fun HomeScreen(
                             Icon(
                                 imageVector = androidx.compose.material.icons.Icons.Default.Settings,
                                 contentDescription = null,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(14.dp)
                             )
                         },
-                        colors = ChipDefaults.secondaryChipColors()
+                        colors = ChipDefaults.secondaryChipColors(),
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
@@ -164,10 +165,6 @@ fun HomeScreen(
     )
 }
 
-// ═══════════════════════════════════════════════════════
-// Phase Dots — BLACK / WHITE / GRAY only
-// ═══════════════════════════════════════════════════════
-@Composable
 private fun PhaseDotsHome(phase: Phase, isAmbient: Boolean = false) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
