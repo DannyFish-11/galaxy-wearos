@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Network Security Configuration for Galaxy Wear OS.
+
+  Base config denies cleartext traffic by default.
+  Only specific debug/local domains are whitelisted for cleartext.
+  All remote traffic must use TLS (https/wss).
+-->
+<network-security-config>
+    <!-- Base: deny cleartext for all traffic by default -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+
+    <!-- Debug/Local network only: permissive for development environments -->
+    <!-- NOTE: These domains should be restricted or removed in production releases -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>  <!-- Android emulator localhost -->
+        <domain includeSubdomains="false">10.0.0.1</domain>  <!-- Local network gateway -->
+        <domain includeSubdomains="false">100.64.0.1</domain><!-- Tailscale/WireGuard CGNAT -->
+        <domain includeSubdomains="false">localhost</domain> <!-- Local dev server -->
+    </domain-config>
+</network-security-config>

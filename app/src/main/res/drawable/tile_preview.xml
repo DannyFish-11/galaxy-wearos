@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  W19-FIX: Galaxy Tile Preview with brand identity and three-phase indicator.
+  Shows a Galaxy "G" logo with three status dots (SILENT/LIMINAL/MANIFEST).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="200dp"
+    android:height="200dp"
+    android:viewportWidth="200"
+    android:viewportHeight="200">
+    <!-- Dark background -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M0,0h200v200h-200z" />
+
+    <!-- Galaxy "G" logo -->
+    <path
+        android:fillColor="#E0E0E0"
+        android:pathData="M100,45C70,45 45,70 45,100C45,130 70,155 100,155C125,155 145,140 152,120L125,120C120,130 110,135 100,135C82,135 68,119 68,100C68,81 82,65 100,65C110,65 118,70 123,77L100,77L100,95L155,95L155,45L135,45L135,58C125,50 113,45 100,45Z" />
+
+    <!-- Three phase dots: SILENT (dark), LIMINAL (gray), MANIFEST (white) -->
+    <!-- SILENT dot -->
+    <path
+        android:fillColor="#333333"
+        android:pathData="M70,175m-8,0a8,8 0,1 1,16 0a8,8 0,1 1,-16 0" />
+    <!-- LIMINAL dot -->
+    <path
+        android:fillColor="#808080"
+        android:pathData="M100,175m-8,0a8,8 0,1 1,16 0a8,8 0,1 1,-16 0" />
+    <!-- MANIFEST dot -->
+    <path
+        android:fillColor="#E0E0E0"
+        android:pathData="M130,175m-8,0a8,8 0,1 1,16 0a8,8 0,1 1,-16 0" />
+
+    <!-- Subtle accent ring -->
+    <path
+        android:strokeColor="#333333"
+        android:strokeWidth="2"
+        android:pathData="M100,25m-70,0a70,70 0,1 1,140 0a70,70 0,1 1,-140 0" />
+</vector>

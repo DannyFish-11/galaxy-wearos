@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  W20-FIX: Galaxy brand logo vector drawable for app launcher icon.
+  Features a stylized "G" lettermark in white on dark background.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108"
+    android:tint="#FFFFFF">
+    <group
+        android:scaleX="0.65"
+        android:scaleY="0.65"
+        android:translateX="19"
+        android:translateY="19">
+        <!-- Galaxy "G" lettermark -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M54,8C28.6,8 8,28.6 8,54C8,79.4 28.6,100 54,100C74.8,100 92.4,86.4 98.4,68L74,68C70.2,76 62.6,81 54,81C39.6,81 27.8,68.8 27.8,54C27.8,39.2 39.6,27 54,27C62.6,27 70,31.8 74,39.4L54,39.4L54,53.6L100,53.6L100,8L82.4,8L82.4,20.4C74.8,13.2 64.8,8 54,8Z" />
+    </group>
+</vector>

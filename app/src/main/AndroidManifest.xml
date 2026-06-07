@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Network -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!-- Audio / Voice -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!-- Haptic feedback -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Wake lock for background connection -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Android 12+ BLE permissions (targetSdk=35 requires runtime permission model) -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+
+    <!-- NEARBY_DEVICES permission for mDNS and WiFi scanning -->
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
+
+    <!-- Request ignore battery optimizations for foreground service stability -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- Foreground service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!-- H3: Auto-restart on boot -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- W7-FIX: Removed unused sensor permissions (BODY_SENSORS, ACTIVITY_RECOGNITION,
+         HIGH_SAMPLING_RATE_SENSORS) to avoid confusing users at install time.
+         Re-add when health sensor features are actually implemented. -->
+
+    <!-- Wear OS hardware -->
+    <uses-feature android:name="android.hardware.type.watch" />
+
+    <application
+        android:name=".GalaxyWearApplication"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="Galaxy"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.DeviceDefault"
+        android:networkSecurityConfig="@xml/network_security_config"
+        tools:ignore="WearSplashScreen">
+
+        <!-- Wear OS: declares this app as a standalone watch app (works without phone companion) -->
+        <meta-data
+            android:name="com.google.android.wearable.standalone"
+            android:value="true" />
+
+        <!-- Main launcher -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Voice input activity — OPPO Watch 3 primary shortcut target -->
+        <!-- SECURITY-FIX-R5: exported="false" because the custom action com.galaxy.wear.ACTION_VOICE_COMMAND
+             is only dispatched internally by the GalaxyWearService. External apps should not be able to
+             trigger voice recording or command interpretation on the watch. -->
+        <activity
+            android:name=".VoiceActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VOICE_COMMAND" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <!-- OPPO ColorOS Watch: double-press side key shortcut entry -->
+            <intent-filter>
+                <action android:name="com.galaxy.wear.ACTION_VOICE_COMMAND" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <!-- Android Wear: voice action intent -->
+            <intent-filter>
+                <action android:name="android.speech.action.VOICE_SEARCH_HANDS_FREE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- Background Galaxy service -->
+        <service
+            android:name=".service.GalaxyWearService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false"
+            android:persistent="true" />
+
+        <!-- BroadcastReceiver for boot and package replacement events.
+             Android 8+ forbids Services from receiving BOOT_COMPLETED directly.
+             The receiver delegates to GalaxyWearService.
+             SECURITY: android:exported="false" because BOOT_COMPLETED and
+             MY_PACKAGE_REPLACED are system-only protected broadcasts. Only the
+             Android system can send these actions; no third-party app can trigger
+             them, so exported=false is safe and correct (prevents malicious
+             explicit intents from starting our service). -->
+        <receiver
+            android:name=".receiver.BootReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Tile service (glanceable status) -->
+        <service
+            android:name=".tile.GalaxyTileService"
+            android:exported="true"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
+            </intent-filter>
+            <meta-data
+                android:name="androidx.wear.tiles.PREVIEW"
+                android:resource="@drawable/tile_preview" />
+        </service>
+
+    </application>
+</manifest>
