@@ -947,4 +947,75 @@ data class AIPMessage(
 
     val msgType: String
         get() = (payload as? JsonObject)?.get("msg_type")?.jsonPrimitive?.content ?: ""
+
+    // ── Device List Query (PR-DEVICE-LIST-QUERY) ──────────────────
+
+    /**
+     * Query device list from V2 gateway.
+     * PR-DEVICE-LIST-QUERY: Non-blocking device status retrieval.
+     */
+    suspend fun queryDeviceList(): DeviceListResult {
+        return try {
+            val payload = buildJsonObject {
+                put("source_device_id", this@AIPClient.deviceId)
+                put("timestamp", System.currentTimeMillis())
+            }
+            sendCommand("query_device_list", payload)
+            DeviceListResult.Pending
+        } catch (e: Exception) {
+            Log.e(TAG, "queryDeviceList failed: ${e.message}")
+            DeviceListResult.Error(e.message ?: "unknown error")
+        }
+    }
+
+    /**
+     * Parse device list from gateway COMMAND_RESULT response.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun parseDeviceList(result: Map<String, Any>): List<DeviceInfo> {
+        val devices = result["devices"] as? List<Map<String, Any>> ?: return emptyList()
+        return devices.map { dev ->
+            DeviceInfo(
+                deviceId = dev["device_id"] as? String ?: "",
+                deviceName = dev["device_name"] as? String ?: dev["device_id"] as? String ?: "unknown",
+                deviceType = dev["device_type"] as? String ?: "unknown",
+                status = dev["status"] as? String ?: "unknown",
+                isLocal = dev["device_id"] == deviceId
+            )
+        }.filter { it.deviceId.isNotEmpty() }
+    }
+
 }
+
+// ── Device List Types (file-level) ────────────────────────────
+
+sealed class DeviceListResult {
+    data object Pending : DeviceListResult()
+    data class Success(val devices: List<DeviceInfo>) : DeviceListResult()
+    data class Error(val message: String) : DeviceListResult()
+}
+
+data class DeviceInfo(
+    val deviceId: String,
+    val deviceName: String,
+    val deviceType: String,
+    val status: String,
+    val isLocal: Boolean = false,
+) {
+    val displayStatus: String
+        get() = when {
+            isLocal -> "本机"
+            status.lowercase() in listOf("online", "connected", "busy") -> "在线"
+            status.lowercase() in listOf("offline", "disconnected") -> "离线"
+            else -> status
+        }
+
+    val statusColor: Long
+        get() = when {
+            isLocal -> 0xFF4CAF50
+            displayStatus == "在线" -> 0xFF2196F3
+            displayStatus == "离线" -> 0xFF333333
+            else -> 0xFF666666
+        }
+}
+
