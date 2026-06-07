@@ -106,7 +106,7 @@ class MainActivity : ComponentActivity() {
                             HomeScreen(
                                 phase = phase,
                                 isAmbient = ambient,
-                                onAgents = { navController.navigate("agents") },
+                                onDevices = { navController.navigate("agents") },
                                 onVoice = { navController.navigate("voice") },
                                 onSettings = { navController.navigate("settings") },
                             )
