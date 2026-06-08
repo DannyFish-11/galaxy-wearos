@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  B4-FIX: Release-only Network Security Configuration for Lumiv Wear OS.
+  Strict: cleartext is completely disabled. Only system CAs are trusted.
+  This file must be referenced in build.gradle release buildType.
+-->
+<network-security-config>
+    <!-- Base: deny cleartext for all traffic by default -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+</network-security-config>
