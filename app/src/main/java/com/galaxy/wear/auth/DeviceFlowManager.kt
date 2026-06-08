@@ -199,8 +199,9 @@ class DeviceFlowManager(private val context: Context) {
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
         } catch (e: Exception) {
-            Log.e(TAG, "EncryptedSharedPreferences init failed, falling back to plaintext: ${e.message}")
-            context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
+            // PR-CR2: NEVER fall back to plaintext — token storage must be encrypted
+            Log.e(TAG, "EncryptedSharedPreferences init failed: ${e.message}")
+            throw SecurityException("无法安全存储认证令牌，设备不满足安全要求", e)
         }
     }
 

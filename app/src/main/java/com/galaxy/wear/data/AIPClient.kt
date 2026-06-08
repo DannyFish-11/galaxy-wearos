@@ -110,10 +110,9 @@ class AIPClient(
     private val maxReconnectDelayMs = ReconnectionConfig.MAX_DELAY_MS // cap at 30s
     private val reconnectJitterMs = ReconnectionConfig.JITTER_MS // +/- 1s jitter (unified)
 
-    // CRITICAL-FIX: ThreadLocal flag to prevent TransportManager ↔ AIPClient infinite loop.
-    // When sendJson(json:String) is called from TransportManager, this flag is true,
-    // so we send directly via WebSocket instead of routing back to TransportManager.
-    private val _isRouting = ThreadLocal<Boolean>()
+    // PR-CR1: AtomicBoolean (not ThreadLocal) for coroutine-safe routing loop detection.
+    // ThreadLocal is unreliable in coroutines ( Dispatchers.IO thread migration ).
+    private val _isRouting = java.util.concurrent.atomic.AtomicBoolean(false)
 
     private val _connectionState = MutableStateFlow(AIPConnectionState.DISCONNECTED)
     val connectionState: StateFlow<AIPConnectionState> = _connectionState.asStateFlow()
@@ -123,8 +122,7 @@ class AIPClient(
 
     private var serverUrl: String = ""
     private var token: String = ""
-    private var _deviceId: String = ""
-    val deviceId: String get() = _deviceId
+    private var deviceId: String = ""
 
     // -----------------------------------------------------------------
     // Lifecycle
@@ -164,7 +162,7 @@ class AIPClient(
 
             serverUrl = url
             token = authToken
-            _deviceId = devId
+            deviceId = devId
             _connectionState.value = AIPConnectionState.CONNECTING
         }
 
@@ -209,14 +207,14 @@ class AIPClient(
                 try {
                     val authMsg = AuthMessage(
                         token = token,
-                        __deviceId = deviceId,
+                        deviceId = deviceId,
                         deviceType = AuthMessage.DEVICE_TYPE_WEAROS,
                         protocolVersion = "3.0"
                     )
                     sendJson(AIPMessage(
                         type = MsgType.AUTH,
                         payload = jsonFormat.encodeToJsonElement(AuthMessage.serializer(), authMsg),
-                        __deviceId = deviceId,
+                        deviceId = deviceId,
                         traceId = "auth_${System.currentTimeMillis()}"
                     ))
                 } catch (e: CancellationException) {
@@ -320,7 +318,7 @@ class AIPClient(
             // SECURITY: Clear sensitive credentials from memory
             serverUrl = ""
             token = ""
-            _deviceId = ""
+            deviceId = ""
         }
     }
 
@@ -333,7 +331,7 @@ class AIPClient(
     override fun sendJson(json: String): Boolean {
         // If already inside a TransportManager routing chain, break the loop by
         // sending directly via WebSocket instead of routing back to TransportManager.
-        if (_isRouting.get() == true) {
+        if (_isRouting.get()) {
             return try {
                 val msg = jsonFormat.decodeFromString(AIPMessage.serializer(), json)
                 // CRITICAL-FIX: Use scope.launch (not runBlocking) to avoid blocking IO thread.
@@ -370,7 +368,7 @@ class AIPClient(
                 }
                 true
             } finally {
-                _isRouting.remove()
+                _isRouting.set(false)
             }
         } catch (e: CancellationException) {
             Log.w(GalaxyWearApplication.TAG, "GatewayClient.sendJson cancelled: scope inactive")
@@ -398,7 +396,7 @@ class AIPClient(
                 _session = null
                 serverUrl = ""
                 token = ""
-                _deviceId = ""
+                deviceId = ""
                 client.close()
             }
         }
@@ -420,7 +418,7 @@ class AIPClient(
         val msg = AIPMessage(
             type = MsgType.COMMAND,
             payload = cmdPayload,
-            __deviceId = deviceId,
+            deviceId = deviceId,
             correlationId = "cmd_${messageId.get()}"
         )
         sendJson(msg)
@@ -479,7 +477,7 @@ class AIPClient(
                     _messages.tryEmit(AIPMessage(
                         type = MsgType.COMMAND_RESULT,
                         payload = resultPayload,
-                        __deviceId = deviceId,
+                        deviceId = deviceId,
                         correlationId = json["correlation_id"]?.jsonPrimitive?.content ?: ""
                     ))
                 }
@@ -492,7 +490,7 @@ class AIPClient(
                     _messages.tryEmit(AIPMessage(
                         type = MsgType.EVENT,
                         payload = eventPayload,
-                        _deviceId = deviceId
+                        deviceId = deviceId
                     ))
                 }
                 "pong" -> {
@@ -518,7 +516,7 @@ class AIPClient(
                                 sendJson(AIPMessage(
                                     type = MsgType.ACK,
                                     payload = ackPayload,
-                                    __deviceId = deviceId,
+                                    deviceId = deviceId,
                                     correlationId = json["correlation_id"]?.jsonPrimitive?.content ?: ""
                                 ))
                             }
@@ -531,7 +529,7 @@ class AIPClient(
                         _messages.tryEmit(AIPMessage(
                             type = msgType,
                             payload = json["payload"] ?: JsonObject(json.toMap()),
-                            __deviceId = deviceId,
+                            deviceId = deviceId,
                             correlationId = json["correlation_id"]?.jsonPrimitive?.content ?: ""
                         ))
                     }
@@ -548,7 +546,7 @@ class AIPClient(
                         _messages.tryEmit(AIPMessage(
                             type = MsgType.LIQUID_EVENT,
                             payload = liquidPayload,
-                            _deviceId = deviceId
+                            deviceId = deviceId
                         ))
                     }
                 }
@@ -558,7 +556,7 @@ class AIPClient(
                         _messages.tryEmit(AIPMessage(
                             type = msgType,
                             payload = json["payload"] ?: JsonObject(json.toMap()),
-                            __deviceId = deviceId,
+                            deviceId = deviceId,
                             correlationId = json["correlation_id"]?.jsonPrimitive?.content
                                 ?: json["correlationId"]?.jsonPrimitive?.content ?: ""
                         ))
@@ -618,7 +616,7 @@ class AIPClient(
                     val pingMsg = AIPMessage(
                         type = MsgType.PING,
                         payload = pingPayload,
-                        __deviceId = deviceId,
+                        deviceId = deviceId,
                         traceId = "ping_${System.currentTimeMillis()}"
                     )
                     val pingJson = jsonFormat.encodeToString(AIPMessage.serializer(), pingMsg)
@@ -712,7 +710,7 @@ class AIPClient(
 
         // WebSocket not connected — try TransportManager as fallback
         // Guard: if _isRouting is true, TransportManager called us; don't loop back.
-        if (_isRouting.get() != true) {
+        if (!_isRouting.get()) {
             try {
                 val transportManager = AipTransportManager.getInstance()
                 if (transportManager.isConnected()) {
@@ -948,75 +946,4 @@ data class AIPMessage(
 
     val msgType: String
         get() = (payload as? JsonObject)?.get("msg_type")?.jsonPrimitive?.content ?: ""
-
-    // ── Device List Query (PR-DEVICE-LIST-QUERY) ──────────────────
-
-    /**
-     * Query device list from V2 gateway.
-     * PR-DEVICE-LIST-QUERY: Non-blocking device status retrieval.
-     */
-    suspend fun queryDeviceList(): DeviceListResult {
-        return try {
-            val payload = buildJsonObject {
-                put("source_device_id", this@AIPClient.deviceId)
-                put("timestamp", System.currentTimeMillis())
-            }
-            sendCommand("query_device_list", payload)
-            DeviceListResult.Pending
-        } catch (e: Exception) {
-            Log.e(TAG, "queryDeviceList failed: ${e.message}")
-            DeviceListResult.Error(e.message ?: "unknown error")
-        }
-    }
-
-    /**
-     * Parse device list from gateway COMMAND_RESULT response.
-     */
-    @Suppress("UNCHECKED_CAST")
-    fun parseDeviceList(result: Map<String, Any>): List<DeviceInfo> {
-        val devices = result["devices"] as? List<Map<String, Any>> ?: return emptyList()
-        return devices.map { dev ->
-            DeviceInfo(
-                deviceId = dev["device_id"] as? String ?: "",
-                deviceName = dev["device_name"] as? String ?: dev["device_id"] as? String ?: "unknown",
-                deviceType = dev["device_type"] as? String ?: "unknown",
-                status = dev["status"] as? String ?: "unknown",
-                isLocal = dev["device_id"] == deviceId
-            )
-        }.filter { it.deviceId.isNotEmpty() }
-    }
-
 }
-
-// ── Device List Types (file-level) ────────────────────────────
-
-sealed class DeviceListResult {
-    data object Pending : DeviceListResult()
-    data class Success(val devices: List<DeviceInfo>) : DeviceListResult()
-    data class Error(val message: String) : DeviceListResult()
-}
-
-data class DeviceInfo(
-    val deviceId: String,
-    val deviceName: String,
-    val deviceType: String,
-    val status: String,
-    val isLocal: Boolean = false,
-) {
-    val displayStatus: String
-        get() = when {
-            isLocal -> "本机"
-            status.lowercase() in listOf("online", "connected", "busy") -> "在线"
-            status.lowercase() in listOf("offline", "disconnected") -> "离线"
-            else -> status
-        }
-
-    val statusColor: ULong
-        get() = when {
-            isLocal -> 0xFF4CAF50
-            displayStatus == "在线" -> 0xFF2196F3
-            displayStatus == "离线" -> 0xFF333333
-            else -> 0xFF666666
-        }
-}
-
