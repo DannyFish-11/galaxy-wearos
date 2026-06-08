@@ -123,7 +123,8 @@ class AIPClient(
 
     private var serverUrl: String = ""
     private var token: String = ""
-    private var deviceId: String = ""
+    private var _deviceId: String = ""
+    val deviceId: String get() = _deviceId
 
     // -----------------------------------------------------------------
     // Lifecycle
@@ -163,7 +164,7 @@ class AIPClient(
 
             serverUrl = url
             token = authToken
-            deviceId = devId
+            _deviceId = devId
             _connectionState.value = AIPConnectionState.CONNECTING
         }
 
@@ -208,14 +209,14 @@ class AIPClient(
                 try {
                     val authMsg = AuthMessage(
                         token = token,
-                        deviceId = deviceId,
+                        __deviceId = deviceId,
                         deviceType = AuthMessage.DEVICE_TYPE_WEAROS,
                         protocolVersion = "3.0"
                     )
                     sendJson(AIPMessage(
                         type = MsgType.AUTH,
                         payload = jsonFormat.encodeToJsonElement(AuthMessage.serializer(), authMsg),
-                        deviceId = deviceId,
+                        __deviceId = deviceId,
                         traceId = "auth_${System.currentTimeMillis()}"
                     ))
                 } catch (e: CancellationException) {
@@ -319,7 +320,7 @@ class AIPClient(
             // SECURITY: Clear sensitive credentials from memory
             serverUrl = ""
             token = ""
-            deviceId = ""
+            _deviceId = ""
         }
     }
 
@@ -397,7 +398,7 @@ class AIPClient(
                 _session = null
                 serverUrl = ""
                 token = ""
-                deviceId = ""
+                _deviceId = ""
                 client.close()
             }
         }
@@ -419,7 +420,7 @@ class AIPClient(
         val msg = AIPMessage(
             type = MsgType.COMMAND,
             payload = cmdPayload,
-            deviceId = deviceId,
+            __deviceId = deviceId,
             correlationId = "cmd_${messageId.get()}"
         )
         sendJson(msg)
@@ -478,7 +479,7 @@ class AIPClient(
                     _messages.tryEmit(AIPMessage(
                         type = MsgType.COMMAND_RESULT,
                         payload = resultPayload,
-                        deviceId = deviceId,
+                        __deviceId = deviceId,
                         correlationId = json["correlation_id"]?.jsonPrimitive?.content ?: ""
                     ))
                 }
@@ -491,7 +492,7 @@ class AIPClient(
                     _messages.tryEmit(AIPMessage(
                         type = MsgType.EVENT,
                         payload = eventPayload,
-                        deviceId = deviceId
+                        _deviceId = deviceId
                     ))
                 }
                 "pong" -> {
@@ -517,7 +518,7 @@ class AIPClient(
                                 sendJson(AIPMessage(
                                     type = MsgType.ACK,
                                     payload = ackPayload,
-                                    deviceId = deviceId,
+                                    __deviceId = deviceId,
                                     correlationId = json["correlation_id"]?.jsonPrimitive?.content ?: ""
                                 ))
                             }
@@ -530,7 +531,7 @@ class AIPClient(
                         _messages.tryEmit(AIPMessage(
                             type = msgType,
                             payload = json["payload"] ?: JsonObject(json.toMap()),
-                            deviceId = deviceId,
+                            __deviceId = deviceId,
                             correlationId = json["correlation_id"]?.jsonPrimitive?.content ?: ""
                         ))
                     }
@@ -547,7 +548,7 @@ class AIPClient(
                         _messages.tryEmit(AIPMessage(
                             type = MsgType.LIQUID_EVENT,
                             payload = liquidPayload,
-                            deviceId = deviceId
+                            _deviceId = deviceId
                         ))
                     }
                 }
@@ -557,7 +558,7 @@ class AIPClient(
                         _messages.tryEmit(AIPMessage(
                             type = msgType,
                             payload = json["payload"] ?: JsonObject(json.toMap()),
-                            deviceId = deviceId,
+                            __deviceId = deviceId,
                             correlationId = json["correlation_id"]?.jsonPrimitive?.content
                                 ?: json["correlationId"]?.jsonPrimitive?.content ?: ""
                         ))
@@ -617,7 +618,7 @@ class AIPClient(
                     val pingMsg = AIPMessage(
                         type = MsgType.PING,
                         payload = pingPayload,
-                        deviceId = deviceId,
+                        __deviceId = deviceId,
                         traceId = "ping_${System.currentTimeMillis()}"
                     )
                     val pingJson = jsonFormat.encodeToString(AIPMessage.serializer(), pingMsg)
@@ -1010,7 +1011,7 @@ data class DeviceInfo(
             else -> status
         }
 
-    val statusColor: Long
+    val statusColor: ULong
         get() = when {
             isLocal -> 0xFF4CAF50
             displayStatus == "在线" -> 0xFF2196F3
