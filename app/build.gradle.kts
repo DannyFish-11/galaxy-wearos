@@ -61,7 +61,7 @@ android {
             buildConfigField("String", "CERT_PIN_PRIMARY", '""')
             buildConfigField("String", "CERT_PIN_BACKUP", '""')
             // B4-FIX: release builds use strict network_security_config without cleartext whitelist
-            resValue("xml", "network_security_config", "@xml/network_security_config_release")
+            resValue("string", "network_security_config", "network_security_config_release")
         }
         debug {
             isMinifyEnabled = false
@@ -146,6 +146,10 @@ dependencies {
 
     // HiveMQ MQTT Client
     implementation("com.hivemq:hivemq-mqtt-client:1.3.3")
+
+    // DI — Koin for Kotlin
+    implementation("io.insert-koin:koin-android:3.5.6")
+    implementation("io.insert-koin:koin-androidx-compose:3.5.6")
 
     // Testing
     testImplementation("junit:junit:4.13.2")

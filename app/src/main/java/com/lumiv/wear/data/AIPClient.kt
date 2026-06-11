@@ -22,6 +22,7 @@ import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 import okhttp3.CertificatePinner
 import kotlin.coroutines.cancellation.CancellationException

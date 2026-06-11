@@ -19,6 +19,7 @@ import com.lumiv.wear.domain.model.Phase
 import com.lumiv.wear.network.MdnsDiscovery
 import com.lumiv.wear.network.TailscaleAdapter
 import com.ufo.lumiv.transport.AipTransportManager
+import com.lumiv.wear.di.appModule
 import com.lumiv.wear.tile.LumivTileService
 import com.lumiv.wear.ui.screens.HapticType
 import com.lumiv.wear.ui.screens.triggerHaptic
@@ -61,8 +62,8 @@ class LumivWearApplication : Application() {
     // Provides clean architecture separation between data and presentation.
     val deviceRepository = DeviceRepository()
     /** Observable device list for UI — backed by DeviceRepository */
-    val devices: StateFlow<List<Device>>
-        get() = deviceRepository.devices as kotlinx.coroutines.flow.StateFlow<List<Device>>
+    val devices: kotlinx.coroutines.flow.Flow<List<Device>>
+        get() = deviceRepository.devices
 
     // WARNING-7: aipClient is initialized in onCreate with try-catch protection.
     // If initialization fails, aipClient remains null and isAipClientReady returns false.
@@ -113,6 +114,13 @@ class LumivWearApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // Initialize Koin dependency injection
+        org.koin.core.context.startKoin {
+            org.koin.android.ext.koin.androidContext(this@LumivWearApplication)
+            modules(appModule)
+        }
+
         Log.i(TAG, "Lumiv Wear OS starting...")
 
         // WARNING-7: Wrap AIPClient initialization to prevent UninitializedPropertyAccessException

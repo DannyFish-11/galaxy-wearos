@@ -25,6 +25,8 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
 import com.lumiv.wear.LumivWearApplication
 import com.lumiv.wear.domain.model.Phase
+import com.lumiv.wear.ui.screens.HapticType
+import com.lumiv.wear.ui.screens.triggerHaptic
 import com.lumiv.wear.ui.theme.LumivWearTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

@@ -24,6 +24,7 @@ import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.lumiv.wear.auth.DeviceFlowManager
 import com.lumiv.wear.domain.model.Phase
 import com.lumiv.wear.ui.screens.DevicesScreen
+import com.lumiv.wear.ui.screens.DecisionScreen
 import com.lumiv.wear.ui.screens.DeviceAuthScreen
 import com.lumiv.wear.ui.screens.HomeScreen
 import com.lumiv.wear.ui.screens.QrCodeFullScreen
@@ -134,6 +135,16 @@ class MainActivity : ComponentActivity() {
                             SettingsScreen(
                                 isAmbient = ambient,
                                 onBack = { navController.popBackStack() }
+                            )
+                        }
+                        composable("decision") {
+                            DecisionScreen(
+                                title = "需要确认",
+                                summary = "请选择一个选项",
+                                options = emptyList(),
+                                onOptionSelected = { navController.popBackStack() },
+                                onVoiceReply = { navController.popBackStack() },
+                                onDismiss = { navController.popBackStack() }
                             )
                         }
                         // DEVICE-FLOW: OAuth 2.0 Device Authorization Grant screen
