@@ -971,4 +971,47 @@ data class AIPMessage(
 
     val msgType: String
         get() = (payload as? JsonObject)?.get("msg_type")?.jsonPrimitive?.content ?: ""
+
+    /**
+     * DEVICE: 查询已连接的设备列表。
+     */
+    suspend fun queryDeviceList(): DeviceListResult {
+        return try {
+            sendCommand("query_devices", buildJsonObject {
+                put("request_id", "dev_${System.currentTimeMillis()}")
+            })
+            // 等待响应（简化版，实际应通过 SharedFlow 收集）
+            DeviceListResult.Loading
+        } catch (e: Exception) {
+            DeviceListResult.Error(e.message ?: "Unknown error")
+        }
+    }
+
+    /**
+     * DEVICE: 解析设备列表响应。
+     */
+    fun parseDeviceList(payload: JsonElement): List<DeviceInfo> {
+        return try {
+            val array = payload.jsonArray
+            array.map { element ->
+                val obj = element.jsonObject
+                DeviceInfo(
+                    deviceId = obj["device_id"]?.jsonPrimitive?.content ?: "unknown",
+                    displayName = obj["display_name"]?.jsonPrimitive?.content ?: "Unknown Device",
+                    deviceType = obj["device_type"]?.jsonPrimitive?.content ?: "unknown",
+                    status = obj["status"]?.jsonPrimitive?.content ?: "unknown",
+                    capabilities = obj["capabilities"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList(),
+                    lastSeen = obj["last_seen"]?.jsonPrimitive?.long ?: System.currentTimeMillis(),
+                )
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
+     * 暴露 deviceId 给 DevicesScreen 使用。
+     */
+    fun getDeviceId(): String = deviceId
+
 }
