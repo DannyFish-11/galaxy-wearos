@@ -141,5 +141,13 @@
                 <action android:name="android.intent.action.KEY_EVENT"/>
             </intent-filter>
         </receiver>
+    <!-- ReplyReceiver: WearOS 决策回复广播接收器 -->
+    <receiver android:name=".receiver.ReplyReceiver"
+        android:exported="false">
+        <intent-filter>
+            <action android:name="com.galaxy.wear.ACTION_DECISION_REPLY"/>
+        </intent-filter>
+    </receiver>
+
     </application>
 </manifest>
