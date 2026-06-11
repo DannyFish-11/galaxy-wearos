@@ -140,70 +140,112 @@ private fun IslandCapsule(
     modifier: Modifier = Modifier,
 ) {
     val scale by animateFloatAsState(
-        targetValue = if (count > 0) 1f else 0.85f,
-        animationSpec = spring(stiffness = 400f, damping = 25f),
+        targetValue = if (count > 0) 1f else 0.88f,
+        animationSpec = spring(stiffness = 380f, damping = 22f),
         label = "capsule_scale"
     )
 
-    val urgencyColor = if (hasUrgent) Color(0xFFB00020) else Color(0xFFD4A030)
+    val urgencyColor = if (hasUrgent) Color(0xFFFF453A) else Color(0xFFD4A030)
+
+    // ── 液态玻璃质感 (Liquid Glass) ──
+    // 参考 Apple Dynamic Island: 有厚度、有折射、有高光
 
     Box(
         modifier = modifier
-            .padding(top = 8.dp)
+            .padding(top = 6.dp)
             .scale(scale)
-            .height(28.dp)
+            .height(30.dp)
             .wrapContentWidth()
-            .clip(RoundedCornerShape(14.dp))
+            // 底层: 环境光晕 (ambient glow)
+            .shadow(
+                elevation = 8.dp,
+                shape = RoundedCornerShape(15.dp),
+                ambientColor = urgencyColor.copy(alpha = glowAlpha * 0.25f),
+                spotColor = Color.Transparent,
+            )
+            // 中层: 浮出阴影 (lift shadow)
+            .shadow(
+                elevation = 2.dp,
+                shape = RoundedCornerShape(15.dp),
+                ambientColor = Color.Black.copy(alpha = 0.4f),
+                spotColor = Color.Black.copy(alpha = 0.2f),
+            )
+            .clip(RoundedCornerShape(15.dp))
             .clickable(onClick = onClick)
-            // 玻璃态背景
+            // 玻璃体: 径向渐变模拟折射
             .background(
-                Brush.horizontalGradient(
+                Brush.radialGradient(
                     colors = listOf(
-                        Color(0xFF1A1A1E).copy(alpha = 0.85f),
-                        Color(0xFF121214).copy(alpha = 0.9f),
-                    )
+                        Color(0xFF2A2A30).copy(alpha = 0.7f),   // 中心亮
+                        Color(0xFF18181C).copy(alpha = 0.85f),  // 边缘暗
+                        Color(0xFF0E0E12).copy(alpha = 0.9f),   // 外缘最深
+                    ),
+                    radius = 120f,
                 )
             )
-            // 发光边框
-            .shadow(
-                elevation = 4.dp,
+            // 玻璃边框: 内发光
+            .padding(1.dp)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFFFFFFFF).copy(alpha = 0.12f),  // 顶部高光
+                        Color(0xFFFFFFFF).copy(alpha = 0.03f),  // 中间淡
+                        Color(0xFFFFFFFF).copy(alpha = 0.01f),  // 底部几乎无
+                    ),
+                ),
                 shape = RoundedCornerShape(14.dp),
-                ambientColor = urgencyColor.copy(alpha = glowAlpha),
-                spotColor = urgencyColor.copy(alpha = glowAlpha * 0.6f),
             )
-            .padding(horizontal = 12.dp, vertical = 4.dp),
+            .padding(horizontal = 14.dp, vertical = 5.dp),
         contentAlignment = Alignment.Center,
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // 状态点 — 脉冲
+            // 状态点 — 液态光球
             Box(
                 modifier = Modifier
-                    .size(6.dp)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(urgencyColor.copy(alpha = 0.6f + glowAlpha * 0.4f))
+                    .size(7.dp)
+                    .background(
+                        Brush.radialGradient(
+                            listOf(
+                                urgencyColor.copy(alpha = 0.9f),
+                                urgencyColor.copy(alpha = 0.4f),
+                            ),
+                        ),
+                        RoundedCornerShape(3.5.dp),
+                    )
             )
 
-            // 状态文本
+            // 状态文本 — 清晰锐利
             Text(
                 text = phaseText,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color(0xFFFFF8EB).copy(alpha = 0.8f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFFFFF8EB).copy(alpha = 0.85f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                letterSpacing = 0.3.sp,
             )
 
-            // 未读数
+            // 未读数 — 微光红点
             if (count > 0) {
-                Text(
-                    text = "• $count",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = urgencyColor.copy(alpha = 0.9f),
-                )
+                Box(
+                    modifier = Modifier
+                        .background(
+                            urgencyColor.copy(alpha = 0.85f),
+                            RoundedCornerShape(8.dp),
+                        )
+                        .padding(horizontal = 5.dp, vertical = 1.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "$count",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                    )
+                }
             }
         }
     }
