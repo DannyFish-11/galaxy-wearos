@@ -41,6 +41,7 @@ fun HomeScreen(
     onVoice: () -> Unit,
     onDevices: () -> Unit,
     onSettings: () -> Unit,
+    islandItems: List<com.galaxy.wear.ui.components.IslandItem> = emptyList(),
 ) {
     val listState = rememberScalingLazyListState(initialCenterItemIndex = 1)
     val coroutineScope = rememberCoroutineScope()
@@ -61,6 +62,23 @@ fun HomeScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             state = listState,
         ) {
+            // ── DYNAMIC ISLAND ───────────────────────
+            // 有消息时显示灵动岛胶囊，点击展开全屏决策
+            if (islandItems.isNotEmpty()) {
+                item {
+                    com.galaxy.wear.ui.components.DynamicIsland(
+                        items = islandItems,
+                        phaseText = when (phase) {
+                            Phase.SILENT -> "Galaxy"
+                            Phase.LIMINAL -> "认知中..."
+                            Phase.MANIFEST -> "执行中..."
+                        },
+                        onVoiceReply = onVoice,
+                        modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
+                    )
+                }
+            }
+
             // ── GALAXY Title ─────────────────────────
             item {
                 Text(
