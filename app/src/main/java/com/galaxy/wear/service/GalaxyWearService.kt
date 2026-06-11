@@ -227,4 +227,70 @@ class GalaxyWearService : LifecycleService() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIFICATION_ID, notification)
     }
+
+    // ── HUMAN-DECISION: 决策通知（OpenClawd 需要人类确认） ──────────
+
+    /**
+     * 显示决策通知 — OpenClawd 需要人类确认时调用。
+     *
+     * 构建 Wear OS 优化的高优先级通知，包含快捷选项按钮和语音输入。
+     * 所有回复通过 ReplyReceiver 捕获并经由 AIPClient 发送到 Mesh 网络。
+     */
+    fun showDecisionNotification(
+        title: String,
+        summary: String,
+        decisionId: String,
+        options: List<String>,
+    ) {
+        val context = this
+
+        val replyIntent = Intent(context, ReplyReceiver::class.java).apply {
+            action = ReplyReceiver.ACTION_REPLY
+            putExtra(ReplyReceiver.EXTRA_DECISION_ID, decisionId)
+        }
+        val replyPending = PendingIntent.getBroadcast(
+            context, decisionId.hashCode(), replyIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val wearableExtender = NotificationCompat.WearableExtender()
+            .setHintShowBackgroundOnly(false)
+
+        options.forEach { optionLabel ->
+            val optionIntent = Intent(context, ReplyReceiver::class.java).apply {
+                action = ReplyReceiver.ACTION_REPLY
+                putExtra(ReplyReceiver.EXTRA_DECISION_ID, decisionId)
+                putExtra(ReplyReceiver.EXTRA_OPTION_ID, optionLabel)
+            }
+            val optionPending = PendingIntent.getBroadcast(
+                context, (decisionId + optionLabel).hashCode(), optionIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            wearableExtender.addAction(NotificationCompat.Action(
+                android.R.drawable.ic_menu_send, optionLabel, optionPending
+            ))
+        }
+
+        val remoteInput = RemoteInput.Builder(ReplyReceiver.EXTRA_VOICE_INPUT)
+            .setLabel("语音回复...")
+            .setAllowFreeFormInput(true)
+            .build()
+        val replyAction = NotificationCompat.Action.Builder(
+            android.R.drawable.ic_btn_speak_now, "回复", replyPending
+        ).addRemoteInput(remoteInput).build()
+        wearableExtender.addAction(replyAction)
+
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("⚠ $title")
+            .setContentText(summary)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setVibrate(longArrayOf(0, 300, 100, 300))
+            .setAutoCancel(true)
+            .extend(wearableExtender)
+
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(decisionId.hashCode(), builder.build())
+    }
 }
