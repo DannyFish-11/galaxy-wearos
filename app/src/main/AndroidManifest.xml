@@ -43,10 +43,10 @@
     <uses-feature android:name="android.hardware.type.watch" />
 
     <application
-        android:name=".GalaxyWearApplication"
+        android:name=".LumivWearApplication"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="Galaxy"
+        android:label="Lumiv"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault"
         android:networkSecurityConfig="@xml/network_security_config"
@@ -69,8 +69,8 @@
         </activity>
 
         <!-- Voice input activity — OPPO Watch 3 primary shortcut target -->
-        <!-- SECURITY-FIX-R5: exported="false" because the custom action com.galaxy.wear.ACTION_VOICE_COMMAND
-             is only dispatched internally by the GalaxyWearService. External apps should not be able to
+        <!-- SECURITY-FIX-R5: exported="false" because the custom action com.lumiv.wear.ACTION_VOICE_COMMAND
+             is only dispatched internally by the LumivWearService. External apps should not be able to
              trigger voice recording or command interpretation on the watch. -->
         <activity
             android:name=".VoiceActivity"
@@ -83,7 +83,7 @@
             </intent-filter>
             <!-- OPPO ColorOS Watch: double-press side key shortcut entry -->
             <intent-filter>
-                <action android:name="com.galaxy.wear.ACTION_VOICE_COMMAND" />
+                <action android:name="com.lumiv.wear.ACTION_VOICE_COMMAND" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
             <!-- Android Wear: voice action intent -->
@@ -93,9 +93,9 @@
             </intent-filter>
         </activity>
 
-        <!-- Background Galaxy service -->
+        <!-- Background Lumiv service -->
         <service
-            android:name=".service.GalaxyWearService"
+            android:name=".service.LumivWearService"
             android:exported="false"
             android:foregroundServiceType="dataSync"
             android:stopWithTask="false"
@@ -103,7 +103,7 @@
 
         <!-- BroadcastReceiver for boot and package replacement events.
              Android 8+ forbids Services from receiving BOOT_COMPLETED directly.
-             The receiver delegates to GalaxyWearService.
+             The receiver delegates to LumivWearService.
              SECURITY: android:exported="false" because BOOT_COMPLETED and
              MY_PACKAGE_REPLACED are system-only protected broadcasts. Only the
              Android system can send these actions; no third-party app can trigger
@@ -123,7 +123,7 @@
 
         <!-- Tile service (glanceable status) -->
         <service
-            android:name=".tile.GalaxyTileService"
+            android:name=".tile.LumivTileService"
             android:exported="true"
             android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
             <intent-filter>
@@ -134,20 +134,17 @@
                 android:resource="@drawable/tile_preview" />
         </service>
 
-        <!-- Side button receiver: double-tap/long-press → voice -->
-        <receiver android:name=".service.WatchButtonReceiver"
-            android:exported="true">
+        <!-- HUMAN-DECISION: WearOS 决策回复接收器。
+             处理用户在决策通知上的选项选择和语音输入，
+             通过 ReplyReceiver 将人类回复转发到 AIPClient。
+             SECURITY: exported="false" 仅内部使用，不暴露给外部应用。 -->
+        <receiver
+            android:name=".receiver.ReplyReceiver"
+            android:exported="false">
             <intent-filter>
-                <action android:name="android.intent.action.KEY_EVENT"/>
+                <action android:name="com.lumiv.wear.ACTION_DECISION_REPLY" />
             </intent-filter>
         </receiver>
-    <!-- ReplyReceiver: WearOS 决策回复广播接收器 -->
-    <receiver android:name=".receiver.ReplyReceiver"
-        android:exported="false">
-        <intent-filter>
-            <action android:name="com.galaxy.wear.ACTION_DECISION_REPLY"/>
-        </intent-filter>
-    </receiver>
 
     </application>
 </manifest>
