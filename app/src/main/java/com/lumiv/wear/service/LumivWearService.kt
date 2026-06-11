@@ -12,11 +12,13 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.RemoteInput
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.lumiv.wear.LumivWearApplication
 import com.lumiv.wear.MainActivity
 import com.lumiv.wear.domain.model.Phase
+import com.lumiv.wear.receiver.ReplyReceiver
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
@@ -226,5 +228,116 @@ class LumivWearService : LifecycleService() {
         val notification = buildNotification(title = text)
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIFICATION_ID, notification)
+    }
+
+    // ── HUMAN-DECISION: 决策通知（OpenClawd 需要人类确认） ──────────
+
+    /**
+     * 显示决策通知 — OpenClawd 需要人类确认时调用。
+     *
+     * 构建一个 Wear OS 优化的高优先级通知，包含：
+     * - 标题 + 摘要描述
+     * - 快捷选项按钮（作为 WearableExtender Action）
+     * - 语音/文字输入（RemoteInput）
+     * - 振动提醒
+     *
+     * 所有回复通过 [ReplyReceiver] 捕获并经由 AIPClient 发送到 Mesh 网络。
+     *
+     * @param title 决策标题（如 "确认删除文件？"）
+     * @param summary 决策摘要描述
+     * @param decisionId 唯一决策标识（用于后端关联）
+     * @param options 用户可选的选项标签列表
+     */
+    fun showDecisionNotification(
+        title: String,
+        summary: String,
+        decisionId: String,
+        options: List<String>,
+    ) {
+        val context = this
+
+        // 基础回复 Intent（不预填选项）
+        val replyIntent = Intent(context, ReplyReceiver::class.java).apply {
+            action = ReplyReceiver.ACTION_REPLY
+            putExtra(ReplyReceiver.EXTRA_DECISION_ID, decisionId)
+        }
+        val replyPending = PendingIntent.getBroadcast(
+            context,
+            decisionId.hashCode(),
+            replyIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // WearableExtender: Wear OS 特有的通知扩展
+        val wearableExtender = NotificationCompat.WearableExtender()
+            .setHintShowBackgroundOnly(false)
+            .setHintAvoidBackgroundClipping(true)
+
+        // 为每个选项添加快捷 Action
+        options.forEach { optionLabel ->
+            val optionIntent = Intent(context, ReplyReceiver::class.java).apply {
+                action = ReplyReceiver.ACTION_REPLY
+                putExtra(ReplyReceiver.EXTRA_DECISION_ID, decisionId)
+                putExtra(ReplyReceiver.EXTRA_OPTION_ID, optionLabel)
+            }
+            val optionPending = PendingIntent.getBroadcast(
+                context,
+                (decisionId + optionLabel).hashCode(),
+                optionIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            wearableExtender.addAction(
+                NotificationCompat.Action(
+                    android.R.drawable.ic_menu_send,
+                    optionLabel,
+                    optionPending
+                )
+            )
+        }
+
+        // RemoteInput: 支持语音/键盘自由输入
+        val remoteInput = RemoteInput.Builder(ReplyReceiver.EXTRA_VOICE_INPUT)
+            .setLabel("语音回复…")
+            .setAllowFreeFormInput(true)
+            .build()
+
+        val replyAction = NotificationCompat.Action.Builder(
+            android.R.drawable.ic_btn_speak_now,
+            "回复",
+            replyPending
+        ).addRemoteInput(remoteInput).build()
+
+        wearableExtender.addAction(replyAction)
+
+        // 构建高优先级通知
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("⚠ $title")
+            .setContentText(summary)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setVibrate(longArrayOf(0, 300, 100, 300))
+            .setAutoCancel(true)
+            .extend(wearableExtender)
+
+        // 点击通知打开 DecisionScreen
+        val decisionIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NEW_TASK
+            putExtra("navigate_to", "decision")
+            putExtra("decision_id", decisionId)
+            putExtra("decision_title", title)
+            putExtra("decision_summary", summary)
+            putStringArrayListExtra("decision_options", ArrayList(options))
+        }
+        val decisionPending = PendingIntent.getActivity(
+            this,
+            decisionId.hashCode() + 9999, // 避免与主 PendingIntent 冲突
+            decisionIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        builder.setContentIntent(decisionPending)
+
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(decisionId.hashCode(), builder.build())
     }
 }

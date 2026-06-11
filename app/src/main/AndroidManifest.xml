@@ -134,5 +134,17 @@
                 android:resource="@drawable/tile_preview" />
         </service>
 
+        <!-- HUMAN-DECISION: WearOS 决策回复接收器。
+             处理用户在决策通知上的选项选择和语音输入，
+             通过 ReplyReceiver 将人类回复转发到 AIPClient。
+             SECURITY: exported="false" 仅内部使用，不暴露给外部应用。 -->
+        <receiver
+            android:name=".receiver.ReplyReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.lumiv.wear.ACTION_DECISION_REPLY" />
+            </intent-filter>
+        </receiver>
+
     </application>
 </manifest>

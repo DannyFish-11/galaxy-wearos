@@ -438,6 +438,30 @@ class AIPClient(
         })
     }
 
+    /**
+     * HUMAN-INPUT: 发送人类决策回复到 Galaxy Mesh 网络。
+     *
+     * 当用户在决策通知上选择选项、语音输入或在 DecisionScreen 中操作时，
+     * 调用此方法将人类输入发送到后端。
+     *
+     * @param decisionId 决策唯一标识
+     * @param selectedOption 用户选择的选项 ID（可为 null）
+     * @param voiceInput 语音输入文本（可为 null）
+     */
+    suspend fun sendHumanInput(
+        decisionId: String,
+        selectedOption: String? = null,
+        voiceInput: String? = null,
+    ) {
+        sendCommand("human_input", buildJsonObject {
+            put("decision_id", decisionId)
+            selectedOption?.let { put("selected_option", it) }
+            voiceInput?.let { put("voice_input", it) }
+            put("device", "wear_os")
+            put("timestamp", System.currentTimeMillis())
+        })
+    }
+
     // -----------------------------------------------------------------
     // Internal
     // -----------------------------------------------------------------
