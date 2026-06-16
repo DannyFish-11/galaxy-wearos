@@ -37,6 +37,12 @@ class GalaxyWearService : LifecycleService() {
         const val CHANNEL_ID = "galaxy_wear"
         const val NOTIFICATION_ID = 1
         const val ACTION_DISCONNECT = "com.galaxy.wear.DISCONNECT"
+        // HITL: raise a decision notification from an incoming decision_request.
+        const val ACTION_SHOW_DECISION = "com.galaxy.wear.SHOW_DECISION"
+        const val EXTRA_DECISION_ID = "decision_id"
+        const val EXTRA_DECISION_TITLE = "decision_title"
+        const val EXTRA_DECISION_SUMMARY = "decision_summary"
+        const val EXTRA_DECISION_OPTIONS = "decision_options"
         const val TAG = "GalaxyWearService"
     }
 
@@ -81,6 +87,20 @@ class GalaxyWearService : LifecycleService() {
         // causes ForegroundServiceDidNotStartInTimeException (5s ANR) on Android 12+.
         // isRunning only guards observer launch, not the foreground notification.
         startForeground()
+
+        // HITL: raise a decision notification from an incoming decision_request.
+        if (intent?.action == ACTION_SHOW_DECISION) {
+            val decisionId = intent.getStringExtra(EXTRA_DECISION_ID)
+            if (decisionId != null) {
+                showDecisionNotification(
+                    title = intent.getStringExtra(EXTRA_DECISION_TITLE) ?: "需要你的决定",
+                    summary = intent.getStringExtra(EXTRA_DECISION_SUMMARY) ?: "",
+                    decisionId = decisionId,
+                    options = intent.getStringArrayListExtra(EXTRA_DECISION_OPTIONS) ?: emptyList(),
+                )
+            }
+        }
+
         synchronized(this) {
             if (!isRunning) {
                 isRunning = true

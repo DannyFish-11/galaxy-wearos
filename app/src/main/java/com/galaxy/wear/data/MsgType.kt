@@ -123,6 +123,11 @@ enum class MsgType(val value: String) {
     @SerialName("operator_action_request")
     OPERATOR_ACTION_REQUEST("operator_action_request"),
 
+    /** DECISION_REQUEST: V2 asks the human to choose (human-in-the-loop / HITL).
+     *  Drives a decision notification; user reply goes back via human_input. */
+    @SerialName("decision_request")
+    DECISION_REQUEST("decision_request"),
+
     /** RELAY: Relay message forwarding */
     @SerialName("relay")
     RELAY("relay"),
