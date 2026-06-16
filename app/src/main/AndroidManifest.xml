@@ -43,7 +43,7 @@
     <uses-feature android:name="android.hardware.type.watch" />
 
     <application
-        android:name=".LumivWearApplication"
+        android:name=".GalaxyWearApplication"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="Lumiv"
@@ -95,7 +95,7 @@
 
         <!-- Background Lumiv service -->
         <service
-            android:name=".service.LumivWearService"
+            android:name=".service.GalaxyWearService"
             android:exported="false"
             android:foregroundServiceType="dataSync"
             android:stopWithTask="false"
@@ -123,7 +123,7 @@
 
         <!-- Tile service (glanceable status) -->
         <service
-            android:name=".tile.LumivTileService"
+            android:name=".tile.GalaxyTileService"
             android:exported="true"
             android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
             <intent-filter>

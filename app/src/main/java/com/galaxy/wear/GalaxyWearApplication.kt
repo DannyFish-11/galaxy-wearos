@@ -8,6 +8,7 @@ import android.net.NetworkCapabilities
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.galaxy.wear.service.GalaxyWearService
 import com.ufo.galaxy.shared.protocol.DeviceIdProvider
 import com.galaxy.wear.data.AIPClient
 import com.galaxy.wear.data.AIPConnectionState
@@ -241,6 +242,7 @@ class GalaxyWearApplication : Application() {
                         when (msg.type) {
                             MsgType.LIQUID_EVENT,
                             MsgType.STATE_EVENT -> handleStateEvent(msg)
+                            MsgType.DECISION_REQUEST -> handleDecisionRequest(msg)
                             else -> {} // Ignore other types
                         }
                     }
@@ -331,6 +333,38 @@ class GalaxyWearApplication : Application() {
         if (oldPhase != _phase.value) {
             triggerHaptic(this, HapticType.PHASE_CHANGE)
             _pulseTrigger.value += 1 // trigger halo pulse
+        }
+    }
+
+    // HITL: V2 sent a decision_request. Raise a decision notification via the
+    // foreground service (it owns the notification channel); option/voice reply
+    // returns through ReplyReceiver → sendCommand("human_input") → V2 registry.
+    private fun handleDecisionRequest(event: AIPMessage) {
+        try {
+            val payload = event.payload as? kotlinx.serialization.json.JsonObject ?: return
+            val decisionId = payload["decision_id"]?.jsonPrimitive?.content ?: return
+            val title = payload["title"]?.jsonPrimitive?.content ?: "需要你的决定"
+            val summary = payload["summary"]?.jsonPrimitive?.content ?: ""
+            // options: [{"id":..,"label":..}] — pass ids back so V2 can match the
+            // registered option ids; show the label when present, else the id.
+            val optionsArr = payload["options"] as? kotlinx.serialization.json.JsonArray
+            val optionIds = ArrayList<String>()
+            optionsArr?.forEach { el ->
+                val o = el as? kotlinx.serialization.json.JsonObject ?: return@forEach
+                val id = o["id"]?.jsonPrimitive?.content ?: return@forEach
+                optionIds.add(id)
+            }
+            Log.i(TAG, "DecisionRequest: id=$decisionId options=${optionIds.size}")
+            val intent = android.content.Intent(this, GalaxyWearService::class.java).apply {
+                action = GalaxyWearService.ACTION_SHOW_DECISION
+                putExtra(GalaxyWearService.EXTRA_DECISION_ID, decisionId)
+                putExtra(GalaxyWearService.EXTRA_DECISION_TITLE, title)
+                putExtra(GalaxyWearService.EXTRA_DECISION_SUMMARY, summary)
+                putStringArrayListExtra(GalaxyWearService.EXTRA_DECISION_OPTIONS, optionIds)
+            }
+            androidx.core.content.ContextCompat.startForegroundService(this, intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "handleDecisionRequest error: ${e.message}")
         }
     }
 
