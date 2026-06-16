@@ -272,7 +272,14 @@ class GalaxyWearApplication : Application() {
             val payload = event.payload as? kotlinx.serialization.json.JsonObject
                 ?: return
             val content = payload["content"]?.jsonObject
-                ?: return
+            if (content == null) {
+                // PR-WEAR-PHASE-SYNC: V2 跨设备 state_event 格式 —— payload 直接带
+                // to_phase（{from_phase,to_phase,source,sync_type}），无嵌套 content。
+                // 映射为相位变更以驱动手表三态环（与桌面 silent/liminal/manifest 同步）。
+                val toPhase = payload["to_phase"]?.jsonPrimitive?.content
+                if (toPhase != null) applyPhaseChange(toPhase)
+                return
+            }
             val msgType = event.msgType
 
             // CRITICAL-3: Log only the message type, never the raw content which may contain
@@ -281,19 +288,7 @@ class GalaxyWearApplication : Application() {
             when (msgType) {
                 "phase_change" -> {
                     val toPhase = content["to_phase"]?.jsonPrimitive?.content
-                    if (toPhase != null) {
-                        val oldPhase = _phase.value
-                        _phase.value = when (toPhase.lowercase()) {
-                            "manifest" -> Phase.MANIFEST
-                            "liminal" -> Phase.LIMINAL
-                            else -> Phase.SILENT
-                        }
-                        // LIQUID-ISLAND: haptic feedback on phase change
-                        if (oldPhase != _phase.value) {
-                            triggerHaptic(this, HapticType.PHASE_CHANGE)
-                            _pulseTrigger.value += 1 // trigger halo pulse
-                        }
-                    }
+                    if (toPhase != null) applyPhaseChange(toPhase)
                 }
                 "task_done" -> {
                     // LIQUID-ISLAND: halo pulse + double-tap haptic
@@ -319,6 +314,23 @@ class GalaxyWearApplication : Application() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "LiquidIsland: handleLiquidEvent error: ${e.message}")
+        }
+    }
+
+    // PR-WEAR-PHASE-SYNC: apply a tri-state phase transition to the watch UI.
+    // Shared by the liquid_event "phase_change" branch and the V2 cross-device
+    // state_event fallback, so both wire formats drive the same SILENT/LIMINAL/
+    // MANIFEST ring + haptic + halo pulse.
+    private fun applyPhaseChange(toPhase: String) {
+        val oldPhase = _phase.value
+        _phase.value = when (toPhase.lowercase()) {
+            "manifest" -> Phase.MANIFEST
+            "liminal" -> Phase.LIMINAL
+            else -> Phase.SILENT
+        }
+        if (oldPhase != _phase.value) {
+            triggerHaptic(this, HapticType.PHASE_CHANGE)
+            _pulseTrigger.value += 1 // trigger halo pulse
         }
     }
 
