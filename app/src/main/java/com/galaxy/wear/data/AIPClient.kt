@@ -575,6 +575,17 @@ class AIPClient(
                         ))
                     }
                 }
+                "decision_request" -> {
+                    // HITL: V2 asks the human to choose. Emit the payload so the
+                    // app observer can raise a decision notification; the reply
+                    // returns via human_input (ReplyReceiver → sendCommand).
+                    _messages.tryEmit(AIPMessage(
+                        type = MsgType.DECISION_REQUEST,
+                        payload = json["payload"]?.jsonObject ?: JsonObject(emptyMap()),
+                        deviceId = deviceId,
+                        correlationId = json["correlation_id"]?.jsonPrimitive?.content ?: ""
+                    ))
+                }
                 else -> {
                     // X-API-CR1: Handle any other known MsgType enum values
                     if (msgType != null) {
