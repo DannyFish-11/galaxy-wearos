@@ -53,25 +53,28 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            buildConfigField("String", "GALAXY_SERVER_URL", '"wss://localhost:9000"')
+            buildConfigField("String", "GALAXY_SERVER_URL", "\"wss://localhost:9000\"")
             // SECURITY-FIX: API_VERSION aligned with Android app (v3.0)
-            buildConfigField("String", "API_VERSION", '"v3.0"')
-            buildConfigField("String", "WS_PATH", '"/ws"')
+            buildConfigField("String", "API_VERSION", "\"v3.0\"")
+            buildConfigField("String", "WS_PATH", "\"/ws\"")
             // SECURITY: SSL certificate pinning hashes. Replace with real SHA-256 pins in production.
-            buildConfigField("String", "CERT_PIN_PRIMARY", '""')
-            buildConfigField("String", "CERT_PIN_BACKUP", '""')
+            buildConfigField("String", "CERT_PIN_PRIMARY", "\"\"")
+            buildConfigField("String", "CERT_PIN_BACKUP", "\"\"")
             // B4-FIX: release builds use strict network_security_config without cleartext whitelist
             resValue("xml", "network_security_config", "@xml/network_security_config_release")
         }
         debug {
             isMinifyEnabled = false
             applicationIdSuffix = ".debug"
-            buildConfigField("String", "GALAXY_SERVER_URL", '"wss://localhost:9000"')
+            // 调试默认指向模拟器宿主别名 10.0.2.2(= 开发机)，明文 ws 便于本地联调。
+            // 旧默认 wss://localhost 在手表上 localhost 指向手表自身、且本地后端多为明文 → 连不上。
+            // 真机请在设置里改成局域网/Tailscale IP(见 README，如 ws://192.168.1.100:9000)。
+            buildConfigField("String", "GALAXY_SERVER_URL", "\"ws://10.0.2.2:9000\"")
             // SECURITY-FIX: API_VERSION aligned with Android app (v3.0)
-            buildConfigField("String", "API_VERSION", '"v3.0"')
-            buildConfigField("String", "WS_PATH", '"/ws"')
-            buildConfigField("String", "CERT_PIN_PRIMARY", '""')
-            buildConfigField("String", "CERT_PIN_BACKUP", '""')
+            buildConfigField("String", "API_VERSION", "\"v3.0\"")
+            buildConfigField("String", "WS_PATH", "\"/ws\"")
+            buildConfigField("String", "CERT_PIN_PRIMARY", "\"\"")
+            buildConfigField("String", "CERT_PIN_BACKUP", "\"\"")
         }
     }
 
