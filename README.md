@@ -43,20 +43,33 @@ Galaxy 手表伴侣应用。通过 AIP v3 协议与 Galaxy 主系统实时同步
 - Android Studio Koala (2024.1.1) 或更新版本
 - JDK 17+
 - Wear OS 3.0+ 模拟器或物理手表
+- **必须**：把 `ufo-galaxy-android` 仓库克隆为本仓库的**同级目录**。
+  本仓库的 `settings.gradle.kts` 通过相对路径 `../ufo-galaxy-android/shared-transport`
+  与 `../ufo-galaxy-android/shared-protocol` 引入这两个共享模块，缺失则 Gradle 配置阶段
+  直接失败。目录结构应为：
+  ```
+  <工作区>/
+  ├── galaxy-wearos/          # 本仓库
+  └── ufo-galaxy-android/     # 必须同级存在（提供 shared-transport / shared-protocol）
+  ```
 
 ### 编译
 
 ```bash
-# 克隆本仓库
-git clone <repo-url> galaxy-wearos
+# 1. 在同一个父目录下克隆两个仓库（顺序不限）
+git clone <android-repo-url> ufo-galaxy-android
+git clone <wearos-repo-url>  galaxy-wearos
 cd galaxy-wearos
 
-# 用 Android Studio 打开，或命令行编译
+# 2. 用 Android Studio 打开，或命令行编译
 ./gradlew :app:assembleDebug
 
-# 安装到手表（USB 调试或 WiFi ADB）
+# 3. 安装到手表（USB 调试或 WiFi ADB）
 adb install app/build/outputs/apk/debug/app-debug.apk
 ```
+
+> 若只克隆了本仓库而没有同级的 `ufo-galaxy-android`，会在配置阶段报
+> `Project directory ... does not exist` —— 按上面的目录结构补齐即可。
 
 ### 首次配对
 
