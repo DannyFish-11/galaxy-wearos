@@ -13,7 +13,7 @@ import com.ufo.galaxy.shared.protocol.DeviceIdProvider
 import com.galaxy.wear.data.AIPClient
 import com.galaxy.wear.data.AIPConnectionState
 import com.galaxy.wear.data.AIPMessage
-import com.galaxy.wear.data.MsgType
+import com.ufo.galaxy.shared.protocol.MsgType
 import com.galaxy.wear.domain.DeviceRepository
 import com.galaxy.wear.domain.model.Device
 import com.galaxy.wear.domain.model.Phase
