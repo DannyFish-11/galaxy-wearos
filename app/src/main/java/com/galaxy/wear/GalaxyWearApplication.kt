@@ -21,14 +21,20 @@ import com.galaxy.wear.network.MdnsDiscovery
 import com.galaxy.wear.network.TailscaleAdapter
 import com.ufo.galaxy.transport.AipTransportManager
 import com.galaxy.wear.tile.GalaxyTileService
+import com.galaxy.wear.domain.parseDecisionOptions
+import com.galaxy.wear.ui.components.IslandItem
 import com.galaxy.wear.ui.screens.HapticType
 import com.galaxy.wear.ui.screens.triggerHaptic
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 /**
  * Galaxy Wear OS Application
@@ -64,6 +70,24 @@ class GalaxyWearApplication : Application() {
     /** Observable device list for UI — backed by DeviceRepository */
     val devices: StateFlow<List<Device>>
         get() = deviceRepository.devices as kotlinx.coroutines.flow.StateFlow<List<Device>>
+
+    // LIQUID-ISLAND: real backing state for the DynamicIsland composable —
+    // previously HomeScreen's `islandItems` parameter had no caller-supplied
+    // value anywhere, so the fully-built Island/DecisionScreen UI was
+    // permanently empty. Populated for real from state_event/decision_request
+    // messages in handleStateEvent()/handleDecisionRequest() below.
+    private val _islandItems = MutableStateFlow<List<IslandItem>>(emptyList())
+    val islandItems: StateFlow<List<IslandItem>> = _islandItems.asStateFlow()
+
+    /** Upsert by id (replaces an existing item with the same id) and cap history length. */
+    private fun pushIslandItem(item: IslandItem) {
+        _islandItems.value = (listOf(item) + _islandItems.value.filterNot { it.id == item.id }).take(5)
+    }
+
+    /** Remove an item, e.g. after its decision has been answered. */
+    fun dismissIslandItem(id: String) {
+        _islandItems.value = _islandItems.value.filterNot { it.id == id }
+    }
 
     // WARNING-7: aipClient is initialized in onCreate with try-catch protection.
     // If initialization fails, aipClient remains null and isAipClientReady returns false.
@@ -298,19 +322,54 @@ class GalaxyWearApplication : Application() {
                     Log.i(TAG, "LiquidIsland: task done on $deviceName")
                     triggerHaptic(this, HapticType.TASK_DONE)
                     _pulseTrigger.value += 1
+                    pushIslandItem(
+                        IslandItem(
+                            id = "task_done_${System.currentTimeMillis()}",
+                            title = "任务完成",
+                            summary = "设备 $deviceName 已完成任务",
+                            source = "系统",
+                            priority = "normal",
+                        )
+                    )
                 }
                 "task_progress" -> {
                     // LIQUID-ISLAND: progress update (no haptic, just visual)
                     val completed = content["completed"]?.jsonPrimitive?.int ?: 0
                     val total = content["total"]?.jsonPrimitive?.int ?: 0
                     Log.i(TAG, "LiquidIsland: progress $completed/$total")
-                    // Progress is displayed in the capsule/dot area
+                    // Fixed id so repeated progress ticks update the same island
+                    // item in place instead of piling up a new one per tick.
+                    if (total > 0) {
+                        pushIslandItem(
+                            IslandItem(
+                                id = "task_progress",
+                                title = "任务进行中",
+                                summary = "$completed / $total",
+                                source = "系统",
+                                priority = "normal",
+                            )
+                        )
+                    }
+                    if (completed >= total && total > 0) {
+                        dismissIslandItem("task_progress")
+                    }
                 }
                 "text_result" -> {
                     // LIQUID-ISLAND: short haptic tap + halo pulse
                     val text = content["text"]?.jsonPrimitive?.content ?: ""
-                    Log.i(TAG, "LiquidIsland: text result: $text")
+                    Log.i(TAG, "LiquidIsland: text result received")
                     triggerHaptic(this, HapticType.MESSAGE_ARRIVAL)
+                    if (text.isNotBlank()) {
+                        pushIslandItem(
+                            IslandItem(
+                                id = "text_result_${System.currentTimeMillis()}",
+                                title = "OpenClawd",
+                                summary = text,
+                                source = "OpenClawd",
+                                priority = "normal",
+                            )
+                        )
+                    }
                     _pulseTrigger.value += 1
                 }
             }
@@ -339,32 +398,70 @@ class GalaxyWearApplication : Application() {
     // HITL: V2 sent a decision_request. Raise a decision notification via the
     // foreground service (it owns the notification channel); option/voice reply
     // returns through ReplyReceiver → sendCommand("human_input") → V2 registry.
+    //
+    // LIQUID-ISLAND: also surface the same decision in-app via the Dynamic
+    // Island (islandItems), so a user who has the watch face open can answer
+    // directly without first dismissing to the notification shade. Both paths
+    // reply through the same real human_input command — answering in one place
+    // resolves the other (dismissIslandItem removes the in-app copy once sent).
     private fun handleDecisionRequest(event: AIPMessage) {
         try {
-            val payload = event.payload as? kotlinx.serialization.json.JsonObject ?: return
+            val payload = event.payload as? JsonObject ?: return
             val decisionId = payload["decision_id"]?.jsonPrimitive?.content ?: return
             val title = payload["title"]?.jsonPrimitive?.content ?: "需要你的决定"
             val summary = payload["summary"]?.jsonPrimitive?.content ?: ""
             // options: [{"id":..,"label":..}] — pass ids back so V2 can match the
             // registered option ids; show the label when present, else the id.
-            val optionsArr = payload["options"] as? kotlinx.serialization.json.JsonArray
-            val optionIds = ArrayList<String>()
-            optionsArr?.forEach { el ->
-                val o = el as? kotlinx.serialization.json.JsonObject ?: return@forEach
-                val id = o["id"]?.jsonPrimitive?.content ?: return@forEach
-                optionIds.add(id)
-            }
+            val optionsArr = payload["options"] as? JsonArray
+            val (optionIds, decisionOptions) = parseDecisionOptions(optionsArr)
             Log.i(TAG, "DecisionRequest: id=$decisionId options=${optionIds.size}")
             val intent = android.content.Intent(this, GalaxyWearService::class.java).apply {
                 action = GalaxyWearService.ACTION_SHOW_DECISION
                 putExtra(GalaxyWearService.EXTRA_DECISION_ID, decisionId)
                 putExtra(GalaxyWearService.EXTRA_DECISION_TITLE, title)
                 putExtra(GalaxyWearService.EXTRA_DECISION_SUMMARY, summary)
-                putStringArrayListExtra(GalaxyWearService.EXTRA_DECISION_OPTIONS, optionIds)
+                putStringArrayListExtra(GalaxyWearService.EXTRA_DECISION_OPTIONS, ArrayList(optionIds))
             }
             androidx.core.content.ContextCompat.startForegroundService(this, intent)
+
+            pushIslandItem(
+                IslandItem(
+                    id = "decision_$decisionId",
+                    title = title,
+                    summary = summary,
+                    source = "OpenClawd",
+                    priority = "high",
+                    options = decisionOptions,
+                    onOptionSelected = { optionId -> replyToDecision(decisionId, selectedOption = optionId) },
+                )
+            )
         } catch (e: Exception) {
             Log.e(TAG, "handleDecisionRequest error: ${e.message}")
+        }
+    }
+
+    /**
+     * Send a human_input reply for an in-app (DynamicIsland) decision response.
+     * Mirrors ReplyReceiver's notification-action reply path exactly, so both
+     * entry points produce the same wire message.
+     */
+    private fun replyToDecision(decisionId: String, selectedOption: String? = null, voiceInput: String? = null) {
+        appScope.launch {
+            try {
+                val payload = buildJsonObject {
+                    put("decision_id", decisionId)
+                    selectedOption?.let { put("selected_option", it) }
+                    voiceInput?.let { put("voice_input", it) }
+                    put("device", "wear_os")
+                    put("timestamp", System.currentTimeMillis())
+                }
+                aipClient.sendCommand("human_input", payload)
+                Log.i(TAG, "Human input sent to mesh (in-app): decision=$decisionId")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send human input (in-app): ${e.message}")
+            } finally {
+                dismissIslandItem("decision_$decisionId")
+            }
         }
     }
 

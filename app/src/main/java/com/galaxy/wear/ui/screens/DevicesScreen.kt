@@ -16,13 +16,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
 import com.galaxy.wear.GalaxyWearApplication
-import com.galaxy.wear.data.AIPMessage
 import com.galaxy.wear.data.DeviceInfo
 import com.galaxy.wear.data.DeviceListResult
 import com.galaxy.wear.ui.theme.*
+import com.ufo.galaxy.shared.protocol.MsgType
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * DevicesScreen — PR-DEVICE-LIST-QUERY: Dynamic device status from gateway
@@ -49,10 +50,9 @@ fun DevicesScreen(
     // Always include local watch
     val localDevice = DeviceInfo(
         deviceId = app.aipClient.deviceId,
-        deviceName = "本机手表",
+        displayName = "本机手表",
         deviceType = "wear_os",
-        status = "online",
-        isLocal = true
+        status = "online"
     )
 
     // Fetch device list on screen open
@@ -70,17 +70,16 @@ fun DevicesScreen(
 
         // Collect response from message flow
         app.aipClient.messages.collectLatest { msg ->
-            when (msg) {
-                is AIPMessage.Result -> {
-                    val payload = msg.payload
-                    if (payload.containsKey("devices")) {
-                        @Suppress("UNCHECKED_CAST")
-                        val resultMap = payload as Map<String, Any>
-                        val parsed = app.aipClient.parseDeviceList(resultMap)
+            when (msg.type) {
+                MsgType.COMMAND_RESULT -> {
+                    val payload = msg.payloadObject
+                    val devicesField = payload["devices"]
+                    if (devicesField != null) {
+                        val parsed = app.aipClient.parseDeviceList(devicesField)
                         val merged = mutableListOf<DeviceInfo>()
 
                         // Add local watch first if not in gateway response
-                        val hasLocal = parsed.any { it.isLocal || it.deviceId == app.aipClient.deviceId }
+                        val hasLocal = parsed.any { it.deviceId == app.aipClient.deviceId }
                         if (!hasLocal) {
                             merged.add(localDevice)
                         }
@@ -91,9 +90,11 @@ fun DevicesScreen(
                         errorMessage = null
                     }
                 }
-                is AIPMessage.Event -> {
-                    if (msg.eventType == "device_disconnected") {
-                        val did = msg.payload["device_id"] as? String
+                MsgType.EVENT -> {
+                    val payload = msg.payloadObject
+                    val eventType = payload["event_type"]?.jsonPrimitive?.content
+                    if (eventType == "device_disconnected") {
+                        val did = payload["device_id"]?.jsonPrimitive?.content
                         if (did != null) {
                             deviceList = deviceList.map {
                                 if (it.deviceId == did) it.copy(status = "offline") else it
@@ -188,6 +189,7 @@ fun DevicesScreen(
             items(deviceList.size) { index ->
                 DeviceItemChip(
                     device = deviceList[index],
+                    isLocal = deviceList[index].deviceId == app.aipClient.deviceId,
                     onClick = {
                         scope.launch {
                             if (app.isAipClientReady()) {
@@ -230,25 +232,35 @@ fun DevicesScreen(
     }
 }
 
+// device.status 是网关/本机自行约定的字符串("online"/"offline"/"connected"/...),
+// DeviceInfo 本身没有 displayStatus/statusColor/isLocal 这几个计算属性(它是纯数据
+// 载体,跟 AIPClient 共用),按本屏幕自己的展示需要在这里本地算,不往共享模型上加。
+private fun deviceIsOnline(device: DeviceInfo): Boolean =
+    device.status == "online" || device.status == "connected"
+
+private fun deviceStatusLabel(device: DeviceInfo): String =
+    if (deviceIsOnline(device)) "在线" else "离线"
+
 /**
  * Single device chip — glass-morphism card style
  */
 @Composable
-private fun DeviceItemChip(device: DeviceInfo, onClick: () -> Unit) {
-    val statusColor = Color(device.statusColor)
+private fun DeviceItemChip(device: DeviceInfo, isLocal: Boolean, onClick: () -> Unit) {
+    val online = deviceIsOnline(device)
+    val statusColor = if (online) SuccessGreen else WhiteSecondary.copy(alpha = 0.5f)
 
     Chip(
         onClick = onClick,
         label = {
             Text(
-                device.deviceName,
+                device.displayName,
                 style = MaterialTheme.typography.body2,
                 maxLines = 1
             )
         },
         secondaryLabel = {
             Text(
-                device.displayStatus,
+                deviceStatusLabel(device),
                 style = MaterialTheme.typography.caption3,
                 color = statusColor
             )
@@ -260,7 +272,7 @@ private fun DeviceItemChip(device: DeviceInfo, onClick: () -> Unit) {
                 contentAlignment = Alignment.Center
             ) {
                 // Glow behind
-                if (device.isLocal || device.displayStatus == "在线") {
+                if (isLocal || online) {
                     Box(
                         modifier = Modifier
                             .size(14.dp)
@@ -275,7 +287,7 @@ private fun DeviceItemChip(device: DeviceInfo, onClick: () -> Unit) {
                 )
             }
         },
-        colors = if (device.isLocal || device.displayStatus == "在线")
+        colors = if (isLocal || online)
             ChipDefaults.primaryChipColors()
         else
             ChipDefaults.secondaryChipColors(),
