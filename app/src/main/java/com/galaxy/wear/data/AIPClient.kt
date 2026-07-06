@@ -7,6 +7,7 @@ import com.galaxy.wear.BuildConfig
 import com.galaxy.wear.GalaxyWearApplication
 import com.ufo.galaxy.shared.protocol.ReconnectionConfig
 import com.ufo.galaxy.shared.protocol.AuthMessage
+import com.ufo.galaxy.shared.protocol.MsgType
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.*
 import io.ktor.client.plugins.*
