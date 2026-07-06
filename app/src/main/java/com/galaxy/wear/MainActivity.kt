@@ -89,6 +89,7 @@ class MainActivity : ComponentActivity() {
                 val navController = rememberSwipeDismissableNavController()
                 val app = application as GalaxyWearApplication
                 val phase by app.phase.collectAsState()
+                val islandItems by app.islandItems.collectAsState()
                 // W4-FIX: Read ambient state to control animations
                 val ambient by isAmbient
 
@@ -109,6 +110,7 @@ class MainActivity : ComponentActivity() {
                                 onDevices = { navController.navigate("agents") },
                                 onVoice = { navController.navigate("voice") },
                                 onSettings = { navController.navigate("settings") },
+                                islandItems = islandItems,
                             )
                         }
                         composable("agents") {

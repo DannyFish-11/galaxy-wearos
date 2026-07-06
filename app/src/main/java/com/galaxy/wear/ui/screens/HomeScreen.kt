@@ -46,6 +46,7 @@ fun HomeScreen(
     val listState = rememberScalingLazyListState(initialCenterItemIndex = 1)
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
+    val app = context.applicationContext as com.galaxy.wear.GalaxyWearApplication
 
     Scaffold(
         vignette = { Vignette(vignettePosition = VignettePosition.TopAndBottom) },
@@ -74,6 +75,12 @@ fun HomeScreen(
                             Phase.MANIFEST -> "执行中..."
                         },
                         onVoiceReply = onVoice,
+                        // Dismissing (tap outside / "关闭") only closes the expanded
+                        // overlay by default - without this, the same item would
+                        // still be in app.islandItems and pop right back up next
+                        // time the capsule is tapped. Actually drop the currently-
+                        // shown item (DynamicIsland always shows items.firstOrNull()).
+                        onCollapse = { islandItems.firstOrNull()?.let { app.dismissIslandItem(it.id) } },
                         modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
                     )
                 }
@@ -173,7 +180,6 @@ fun HomeScreen(
     }
 
     // ── Halo ring (ambient, always rendered) ────
-    val app = context.applicationContext as com.galaxy.wear.GalaxyWearApplication
     val pulseTrigger by app.pulseTrigger.collectAsState()
     PhaseHaloRing(
         phase = phase,
