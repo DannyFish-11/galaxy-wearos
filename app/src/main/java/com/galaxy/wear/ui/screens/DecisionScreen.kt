@@ -15,7 +15,6 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
 import com.galaxy.wear.ui.triggerHaptic
 import com.galaxy.wear.ui.HapticType
-import com.galaxy.wear.ui.HapticUtils
 
 /**
  * DecisionOption — 决策选项数据类

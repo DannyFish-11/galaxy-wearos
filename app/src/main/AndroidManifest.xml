@@ -69,8 +69,8 @@
         </activity>
 
         <!-- Voice input activity — OPPO Watch 3 primary shortcut target -->
-        <!-- SECURITY-FIX-R5: exported="false" because the custom action com.lumiv.wear.ACTION_VOICE_COMMAND
-             is only dispatched internally by the LumivWearService. External apps should not be able to
+        <!-- SECURITY-FIX-R5: exported="false" because the custom action com.galaxy.wear.ACTION_VOICE_COMMAND
+             is only dispatched internally by the GalaxyWearService. External apps should not be able to
              trigger voice recording or command interpretation on the watch. -->
         <activity
             android:name=".VoiceActivity"
@@ -83,7 +83,7 @@
             </intent-filter>
             <!-- OPPO ColorOS Watch: double-press side key shortcut entry -->
             <intent-filter>
-                <action android:name="com.lumiv.wear.ACTION_VOICE_COMMAND" />
+                <action android:name="com.galaxy.wear.ACTION_VOICE_COMMAND" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
             <!-- Android Wear: voice action intent -->
@@ -103,7 +103,7 @@
 
         <!-- BroadcastReceiver for boot and package replacement events.
              Android 8+ forbids Services from receiving BOOT_COMPLETED directly.
-             The receiver delegates to LumivWearService.
+             The receiver delegates to GalaxyWearService.
              SECURITY: android:exported="false" because BOOT_COMPLETED and
              MY_PACKAGE_REPLACED are system-only protected broadcasts. Only the
              Android system can send these actions; no third-party app can trigger
@@ -142,7 +142,7 @@
             android:name=".receiver.ReplyReceiver"
             android:exported="false">
             <intent-filter>
-                <action android:name="com.lumiv.wear.ACTION_DECISION_REPLY" />
+                <action android:name="com.galaxy.wear.ACTION_DECISION_REPLY" />
             </intent-filter>
         </receiver>
 
