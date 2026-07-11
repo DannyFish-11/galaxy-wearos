@@ -69,7 +69,7 @@ class VoiceActivity : ComponentActivity() {
             }
         }
 
-        private const val ACTION_VOICE_COMMAND = "com.galaxy.wear.ACTION_VOICE_COMMAND"
+        const val ACTION_VOICE_COMMAND = "com.galaxy.wear.ACTION_VOICE_COMMAND"
     }
 
     private val speechLauncher = registerForActivityResult(
