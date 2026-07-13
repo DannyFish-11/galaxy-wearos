@@ -5,7 +5,7 @@ import android.util.Log
 import com.hivemq.client.mqtt.MqttClient
 import com.hivemq.client.mqtt.datatypes.MqttQos
 import com.hivemq.client.mqtt.mqtt3.Mqtt3AsyncClient
-import com.ufo.galaxy.network.GatewayClient
+import com.galaxy.wear.network.GatewayClient
 import java.util.UUID
 
 /**

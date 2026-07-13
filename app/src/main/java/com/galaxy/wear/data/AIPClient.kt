@@ -523,13 +523,62 @@ class AIPClient(
                     // Heartbeat: record pong receipt time for timeout detection
                     lastPongTimeMs.set(System.currentTimeMillis())
                 }
+                "takeover_request" -> {
+                    // 诚实拒绝(相对主体原则:设备如实申报自己做不到的事)。
+                    // Wear 没有执行运行时,不能接管任务;裸 ack 只表示"收到",
+                    // 中心的 takeover 协调器等的是带 accepted 裁决的
+                    // takeover_response——不给裁决它只能挂到超时。
+                    val reqPayload = json["payload"]?.jsonObject
+                    val declinePayload = buildJsonObject {
+                        put("takeover_id", reqPayload?.get("takeover_id") ?: JsonPrimitive(""))
+                        put("session_id", reqPayload?.get("session_id") ?: JsonPrimitive(""))
+                        put("task_id", reqPayload?.get("task_id") ?: JsonPrimitive(""))
+                        put("trace_id", reqPayload?.get("trace_id") ?: (json["trace_id"] ?: JsonPrimitive("")))
+                        put("accepted", JsonPrimitive(false))
+                        put("reason", JsonPrimitive("wearos_no_execution_runtime"))
+                        put("device", JsonPrimitive("wear_os"))
+                    }
+                    scope.launch {
+                        sendJson(AIPMessage(
+                            type = MsgType.TAKEOVER_RESPONSE,
+                            payload = declinePayload,
+                            deviceId = deviceId,
+                            correlationId = json["correlation_id"]?.jsonPrimitive?.content ?: ""
+                        ))
+                    }
+                    Log.i(GalaxyWearApplication.TAG, "takeover_request declined honestly (no execution runtime)")
+                }
+                "handoff_envelope_v2" -> {
+                    // 诚实终局失败:handoff 派发方等的是终局 result/failure。
+                    // 带 PR-46 跨仓 schema 门要求的双版本字段,否则终局上行会
+                    // 在中心的 canonical 真相链之前被 REJECT。
+                    val hoPayload = json["payload"]?.jsonObject
+                    val failurePayload = buildJsonObject {
+                        put("handoff_id", hoPayload?.get("handoff_id") ?: JsonPrimitive(""))
+                        put("task_id", hoPayload?.get("task_id") ?: JsonPrimitive(""))
+                        put("trace_id", hoPayload?.get("trace_id") ?: (json["trace_id"] ?: JsonPrimitive("")))
+                        put("response_kind", JsonPrimitive("failure"))
+                        put("error", JsonPrimitive("wearos_no_execution_runtime"))
+                        put("schema_version", JsonPrimitive("1"))
+                        put("completion_closure_contract_version", JsonPrimitive("1"))
+                    }
+                    scope.launch {
+                        sendJson(AIPMessage(
+                            type = MsgType.HANDOFF_ENVELOPE_V2_RESULT,
+                            payload = failurePayload,
+                            deviceId = deviceId,
+                            correlationId = json["correlation_id"]?.jsonPrimitive?.content ?: ""
+                        ))
+                    }
+                    Log.i(GalaxyWearApplication.TAG, "handoff_envelope_v2 declined honestly (terminal failure sent)")
+                }
                 // LOW-FIX (Cross-repo): Minimal-compat handling for advanced message types.
                 // Wear OS acknowledges receipt of advanced types to maintain protocol
                 // compatibility with Android/Gateway without full processing.
+                // (takeover_request / handoff_envelope_v2 已上移为诚实拒绝分支。)
                 "device_register", "capability_report", "heartbeat",
                 "diagnostics_payload", "device_state_snapshot",
-                "takeover_request", "takeover_response",
-                "handoff_envelope_v2", "operator_action_request",
+                "takeover_response", "operator_action_request",
                 "relay", "wake_event", "broadcast", "ack" -> {
                     if (msgType != null && MsgType.ACK_ON_RECEIPT_TYPES.contains(msgType)) {
                         // Send minimal ack for types that require acknowledgement

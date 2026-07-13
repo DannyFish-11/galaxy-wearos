@@ -10,7 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
 import android.util.Log
-import com.ufo.galaxy.network.GatewayClient
+import com.galaxy.wear.network.GatewayClient
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
