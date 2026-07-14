@@ -146,5 +146,21 @@
             </intent-filter>
         </receiver>
 
+        <!-- 侧键硬键唤醒语音接收器。类此前存在但从未在 manifest 注册
+             (其自身注释要求注册),等于死组件 —— 现注册使之可用。
+             SECURITY: exported="false" 仅内部使用。
+             平台限制(如实标注):Wear OS 多数设备不广播系统级
+             ACTION_KEY_EVENT,该路径在此类设备上收不到事件;可靠的
+             侧键唤醒需 AccessibilityService 回退(见类文档)。注册它
+             是让"支持该广播的设备"能用,不代表所有设备可用。 -->
+        <receiver
+            android:name=".service.WatchButtonReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.KEY_EVENT" />
+            </intent-filter>
+        </receiver>
+
     </application>
 </manifest>
