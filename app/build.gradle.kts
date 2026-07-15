@@ -21,9 +21,10 @@ android {
         // Only keep needed language resources
         resourceConfigurations += listOf("zh", "en")
 
-        // Wear OS: mark as watch app for Play Store
-        @Suppress("UnstableApiUsage")
-        setMetadata("com.google.android.wearable.standalone", "true")
+        // Wear OS standalone 标记由 AndroidManifest.xml 的
+        // <meta-data android:name="com.google.android.wearable.standalone" android:value="true"/>
+        // 声明(见 app/src/main/AndroidManifest.xml)。build.gradle 里没有 setMetadata 这个 DSL
+        // 函数——原来那行是编译阻塞(Unresolved reference),且与清单里的声明重复,删除。
     }
 
     buildFeatures {
