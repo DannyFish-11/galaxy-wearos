@@ -200,7 +200,7 @@ private fun PhaseDotsHome(phase: Phase, isAmbient: Boolean = false) {
         // SILENT — dark gray
         val silentScale by animateFloatAsState(
             targetValue = if (phase == Phase.SILENT) 1.25f else 0.8f,
-            animationSpec = if (isAmbient) snap() else spring(stiffness = 300f, damping = 15f),
+            animationSpec = if (isAmbient) snap() else spring(dampingRatio = 0.6f, stiffness = 300f),
             label = "dot_silent"
         )
         val silentAlpha by animateFloatAsState(
@@ -213,7 +213,7 @@ private fun PhaseDotsHome(phase: Phase, isAmbient: Boolean = false) {
         // LIMINAL — medium gray (NOT amber)
         val liminalScale by animateFloatAsState(
             targetValue = if (phase == Phase.LIMINAL) 1.25f else 0.8f,
-            animationSpec = if (isAmbient) snap() else spring(stiffness = 300f, damping = 15f),
+            animationSpec = if (isAmbient) snap() else spring(dampingRatio = 0.6f, stiffness = 300f),
             label = "dot_liminal"
         )
         val liminalAlpha by animateFloatAsState(
@@ -226,7 +226,7 @@ private fun PhaseDotsHome(phase: Phase, isAmbient: Boolean = false) {
         // MANIFEST — bright white/gray
         val manifestScale by animateFloatAsState(
             targetValue = if (phase == Phase.MANIFEST) 1.25f else 0.8f,
-            animationSpec = if (isAmbient) snap() else spring(stiffness = 300f, damping = 15f),
+            animationSpec = if (isAmbient) snap() else spring(dampingRatio = 0.6f, stiffness = 300f),
             label = "dot_manifest"
         )
         val manifestAlpha by animateFloatAsState(

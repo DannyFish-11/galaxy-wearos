@@ -156,7 +156,7 @@ private fun DecisionOptionChip(
     var pressed by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
         targetValue = if (pressed) 0.96f else 1f,
-        animationSpec = spring(stiffness = 400f, damping = 20f),
+        animationSpec = spring(dampingRatio = 0.6f, stiffness = 400f),
         label = "option_scale_${option.id}"
     )
 
