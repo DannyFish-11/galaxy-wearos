@@ -1,7 +1,11 @@
 package com.galaxy.wear.ui.screens
 
+import android.app.RemoteInput
 import android.content.Context
+import android.content.Intent
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
@@ -16,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import androidx.wear.compose.material.*
+import androidx.wear.input.RemoteInputIntentHelper
 import com.galaxy.wear.GalaxyWearApplication
 import com.galaxy.wear.data.AIPConnectionState
 import kotlinx.coroutines.Job
@@ -85,6 +90,40 @@ fun SettingsScreen(
             .putString("server_url", serverUrl)
             .putString("auth_token", token)
             .apply()
+    }
+
+    // 手表手动输入:用 Wear RemoteInput 弹系统输入(语音/手写/键盘),把结果回填。
+    // 此前"服务器"/"令牌"两个 chip 的 onClick 是空的 → 手表填不了任意自建 V2 地址/令牌,
+    // 只能靠预设(localhost/100.64.0.1),连不到真实 IP。补上真正的手动输入,补齐"能连"的一环。
+    val urlLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val entered = RemoteInput.getResultsFromIntent(result.data)
+            ?.getCharSequence("wear_server_url")?.toString()?.trim()
+        if (!entered.isNullOrEmpty()) {
+            serverUrl = entered
+            saveSettings()
+        }
+    }
+    val tokenLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val entered = RemoteInput.getResultsFromIntent(result.data)
+            ?.getCharSequence("wear_auth_token")?.toString()?.trim()
+        if (!entered.isNullOrEmpty()) {
+            token = entered
+            saveSettings()
+        }
+    }
+    fun launchTextInput(
+        launcher: androidx.activity.result.ActivityResultLauncher<Intent>,
+        key: String,
+        label: String
+    ) {
+        val remoteInput = RemoteInput.Builder(key).setLabel(label).build()
+        val intent = RemoteInputIntentHelper.createActionRemoteInputIntent()
+        RemoteInputIntentHelper.putRemoteInputsExtra(intent, listOf(remoteInput))
+        launcher.launch(intent)
     }
 
     // Reset isConnecting when connection state changes from CONNECTING
@@ -164,7 +203,9 @@ fun SettingsScreen(
                     // On a real watch, use a dedicated input screen
                     // Here we show a chip that would open an input dialog
                     Chip(
-                        onClick = { /* Open URL input */ },
+                        onClick = {
+                            launchTextInput(urlLauncher, "wear_server_url", "服务器 ws(s)://IP:9000")
+                        },
                         label = {
                             Text(
                                 text = serverUrl.ifEmpty { "点击设置服务器地址" },
@@ -190,7 +231,9 @@ fun SettingsScreen(
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
                     Chip(
-                        onClick = { /* Open token input */ },
+                        onClick = {
+                            launchTextInput(tokenLauncher, "wear_auth_token", "令牌 Token")
+                        },
                         label = {
                             Text(
                                 text = if (token.isEmpty()) "点击设置 Token" else "••••••••",
