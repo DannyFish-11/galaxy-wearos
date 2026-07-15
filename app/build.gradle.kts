@@ -86,6 +86,29 @@ android {
         }
     }
 
+    // HiveMQ MQTT client 传递性引入 Netty,多个 netty-*.jar 各自带一份
+    // META-INF/INDEX.LIST(及 io.netty.versions.properties 等),打 APK 时
+    // mergeDebugJavaResource 因"同名多份"直接失败。这些是 jar 元数据,APK 里用不到,
+    // 统一丢弃即可(assembleDebug 才走到这步,compileDebugKotlin 看不到)。
+    packaging {
+        resources {
+            excludes += setOf(
+                "META-INF/INDEX.LIST",
+                "META-INF/io.netty.versions.properties",
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE",
+                "META-INF/LICENSE.txt",
+                "META-INF/LICENSE.md",
+                "META-INF/LICENSE-notice.md",
+                "META-INF/NOTICE",
+                "META-INF/NOTICE.txt",
+                "META-INF/NOTICE.md",
+                "META-INF/*.kotlin_module",
+                "META-INF/versions/**"
+            )
+        }
+    }
+
     // Remove unused kotlin.Metadata annotations at build time
     kotlin {
         sourceSets.all {
