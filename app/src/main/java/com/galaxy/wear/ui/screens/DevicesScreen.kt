@@ -2,6 +2,7 @@ package com.galaxy.wear.ui.screens
 
 import android.util.Log
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,6 +25,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 /**
  * DevicesScreen — PR-DEVICE-LIST-QUERY: Dynamic device status from gateway
@@ -49,7 +51,7 @@ fun DevicesScreen(
 
     // Always include local watch
     val localDevice = DeviceInfo(
-        deviceId = app.aipClient.deviceId,
+        deviceId = app.aipClient.getDeviceId(),
         displayName = "本机手表",
         deviceType = "wear_os",
         status = "online"
@@ -79,7 +81,7 @@ fun DevicesScreen(
                         val merged = mutableListOf<DeviceInfo>()
 
                         // Add local watch first if not in gateway response
-                        val hasLocal = parsed.any { it.deviceId == app.aipClient.deviceId }
+                        val hasLocal = parsed.any { it.deviceId == app.aipClient.getDeviceId() }
                         if (!hasLocal) {
                             merged.add(localDevice)
                         }
@@ -189,7 +191,7 @@ fun DevicesScreen(
             items(deviceList.size) { index ->
                 DeviceItemChip(
                     device = deviceList[index],
-                    isLocal = deviceList[index].deviceId == app.aipClient.deviceId,
+                    isLocal = deviceList[index].deviceId == app.aipClient.getDeviceId(),
                     onClick = {
                         scope.launch {
                             if (app.isAipClientReady()) {

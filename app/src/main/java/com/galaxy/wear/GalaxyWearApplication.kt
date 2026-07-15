@@ -23,8 +23,8 @@ import com.ufo.galaxy.transport.AipTransportManager
 import com.galaxy.wear.tile.GalaxyTileService
 import com.galaxy.wear.domain.parseDecisionOptions
 import com.galaxy.wear.ui.components.IslandItem
-import com.galaxy.wear.ui.screens.HapticType
-import com.galaxy.wear.ui.screens.triggerHaptic
+import com.galaxy.wear.ui.HapticType
+import com.galaxy.wear.ui.triggerHaptic
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

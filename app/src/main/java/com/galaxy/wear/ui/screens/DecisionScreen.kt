@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
@@ -184,7 +185,7 @@ private fun DecisionOptionChip(
         },
         icon = {
             Icon(
-                option.icon,
+                painter = painterResource(option.icon),
                 contentDescription = null,
                 modifier = Modifier.size(20.dp),
                 tint = if (option.isDestructive) Color.White else MaterialTheme.colors.primary

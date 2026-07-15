@@ -7,8 +7,13 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -140,7 +145,7 @@ fun HomeScreen(
                         label = { Text("语音", style = MaterialTheme.typography.caption2) },
                         icon = {
                             Icon(
-                                imageVector = androidx.compose.material.icons.Icons.Default.Mic,
+                                imageVector = Icons.Default.Mic,
                                 contentDescription = null,
                                 modifier = Modifier.size(14.dp)
                             )
@@ -153,7 +158,7 @@ fun HomeScreen(
                         label = { Text("设备", style = MaterialTheme.typography.caption2) },
                         icon = {
                             Icon(
-                                imageVector = androidx.compose.material.icons.Icons.Default.Devices,
+                                imageVector = Icons.Default.Devices,
                                 contentDescription = null,
                                 modifier = Modifier.size(14.dp)
                             )
@@ -166,7 +171,7 @@ fun HomeScreen(
                         label = { Text("设置", style = MaterialTheme.typography.caption2) },
                         icon = {
                             Icon(
-                                imageVector = androidx.compose.material.icons.Icons.Default.Settings,
+                                imageVector = Icons.Default.Settings,
                                 contentDescription = null,
                                 modifier = Modifier.size(14.dp)
                             )
@@ -189,6 +194,7 @@ fun HomeScreen(
     )
 }
 
+@Composable
 private fun PhaseDotsHome(phase: Phase, isAmbient: Boolean = false) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
