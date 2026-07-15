@@ -1,0 +1,57 @@
+name: Wear Compile Gate
+
+# Wear OS 之前【没有任何 CI】,编译从未被验证过 —— 这是它长期编译不过却没人拦的根因。
+# 本门只做一件事:把 :app 的 debug Kotlin 编译起来。因 settings.gradle.kts 依赖兄弟仓
+# ../ufo-galaxy-android 的 :shared-transport / :shared-protocol,CI 必须同时检出两仓、
+# 摆成兄弟目录再编译。
+#
+# 需要所有者做一次:添加仓库 Secret **GALAXY_CROSS_REPO_TOKEN**(一个能读
+# DannyFish-11/ufo-galaxy-android 的 PAT 或 fine-grained token)——默认 GITHUB_TOKEN
+# 只能访问当前仓,拿不到私有兄弟仓。加上后本门即可真正编译验证。
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout galaxy-wearos
+        uses: actions/checkout@v4
+        with:
+          path: galaxy-wearos
+
+      - name: Checkout sibling ufo-galaxy-android (shared-transport / shared-protocol)
+        uses: actions/checkout@v4
+        with:
+          repository: DannyFish-11/ufo-galaxy-android
+          ref: main
+          path: ufo-galaxy-android
+          token: ${{ secrets.GALAXY_CROSS_REPO_TOKEN || github.token }}
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('galaxy-wearos/**/*.gradle*', 'galaxy-wearos/gradle/wrapper/gradle-wrapper.properties') }}
+
+      - name: Compile debug Kotlin (:app)
+        working-directory: galaxy-wearos
+        run: ./gradlew :app:compileDebugKotlin --no-daemon --stacktrace

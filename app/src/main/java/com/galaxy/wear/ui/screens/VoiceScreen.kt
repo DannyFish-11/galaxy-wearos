@@ -2,6 +2,7 @@ package com.galaxy.wear.ui.screens
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.Intent
 import android.speech.RecognizerIntent
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -130,8 +131,8 @@ fun VoiceScreen(
                         statusText = "聆听中..."
                         waveTime = 0f
                         try {
-                            val intent = RecognizerIntent().apply {
-                                action = RecognizerIntent.ACTION_RECOGNIZE_SPEECH
+                            // RecognizerIntent 构造器私有,不能实例化;须用 Intent(ACTION)。
+                            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                                     RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)

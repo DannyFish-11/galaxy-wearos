@@ -32,7 +32,6 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * OAuth 2.0 Device Flow (RFC 8628) 管理器
