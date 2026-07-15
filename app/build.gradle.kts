@@ -144,6 +144,11 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
     implementation("org.msgpack:msgpack-core:0.9.8")
 
+    // 二维码(设备登录 QrCodeView / DeviceAuthScreen 用):此前 QrCodeView import 了
+    // com.google.zxing.* 却【没声明依赖】,BitMatrix/MultiFormatWriter 全部无法解析,
+    // 是 QrCodeView 一连串编译错的总根因。补上 ZXing core。
+    implementation("com.google.zxing:core:3.5.3")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
