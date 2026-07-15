@@ -137,9 +137,10 @@ private fun generateQrBitmap(
         val lightArgb = lightColor.toArgb()
         val paint = Paint().apply { isAntiAlias = false }
 
-        // 计算每个模块的大小
-        val moduleWidth = width.toFloat() / bitMatrix.width
-        val moduleHeight = height.toFloat() / bitMatrix.height
+        // 计算每个模块的大小(两端都显式 .toFloat() → Float.div(Float) 单一重载,
+        // 避免 K2 对 Float.div(Int) 的类型推断歧义级联到后面的 + / -)。
+        val moduleWidth: Float = width.toFloat() / bitMatrix.width.toFloat()
+        val moduleHeight: Float = height.toFloat() / bitMatrix.height.toFloat()
 
         // 绘制背景
         canvas.drawColor(lightArgb)
