@@ -11,7 +11,7 @@ import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.plugins.logging.DEFAULT
+import io.ktor.client.plugins.logging.LogLevel
 import io.ktor.client.plugins.logging.Logger
 import io.ktor.client.plugins.logging.Logging
 import io.ktor.client.request.header
@@ -170,7 +170,7 @@ class DeviceFlowManager(private val context: Context) {
             install(ContentNegotiation) { json(jsonFormat) }
             install(Logging) {
                 logger = Logger.DEFAULT
-                level = if (BuildConfig.DEBUG) io.ktor.client.plugins.logging.LogLevel.INFO else io.ktor.client.plugins.logging.LogLevel.NONE
+                level = if (BuildConfig.DEBUG) LogLevel.INFO else LogLevel.NONE
             }
             install(HttpTimeout) {
                 requestTimeoutMillis = 15000
@@ -273,7 +273,9 @@ class DeviceFlowManager(private val context: Context) {
                     DeviceFlowResult.Cancelled
                 }
                 pollResult == null -> {
-                    emitState(FlowState.Timeout)
+                    // FlowState 无 Timeout 变体（仅 DeviceFlowResult 有），
+                    // 超时以 Error 状态呈现给 UI，结果仍返回 DeviceFlowResult.Timeout。
+                    emitState(FlowState.Error("授权超时"))
                     DeviceFlowResult.Timeout
                 }
                 pollResult.error != null -> {

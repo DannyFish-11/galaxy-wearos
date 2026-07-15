@@ -139,6 +139,16 @@ dependencies {
     implementation("io.ktor:ktor-client-okhttp:2.3.12")
     implementation("io.ktor:ktor-client-websockets:2.3.12")
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.12")
+    // AIPClient / DeviceFlowManager 用到 ContentNegotiation 与 Logging 两个客户端插件
+    // (io.ktor.client.plugins.contentnegotiation / .logging),此前【没声明这两个 artifact】,
+    // 导致 ContentNegotiation/Logging/LogLevel/Logger 全部无法解析 —— 补上。
+    implementation("io.ktor:ktor-client-content-negotiation:2.3.12")
+    implementation("io.ktor:ktor-client-logging:2.3.12")
+
+    // Wear Tiles 的 onTileRequest 必须返回 Guava ListenableFuture 且用 Futures.immediateFuture 构造。
+    // androidx 只传递了 listenablefuture 桩(仅含 ListenableFuture 接口),没有 Futures 工具类 →
+    // GalaxyTileService 的 Futures.* 无法解析。补上完整 Guava(android 变体)。
+    implementation("com.google.guava:guava:33.3.1-android")
 
     // Serialization — JSON + MessagePack dual-format
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")

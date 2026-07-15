@@ -1,17 +1,19 @@
 package com.galaxy.wear.tile
 
-import android.util.Log
-// 之前同时 wildcard 导入了 androidx.wear.tiles.* 与 androidx.wear.protolayout.*,
-// 两套包各有一份 LayoutElementBuilders / ModifiersBuilders / ColorBuilders /
-// DimensionBuilders / material.Text / Typography,导致每个 builder 都"重载歧义 →
-// 成员(Box/Column/Corner/...)无法解析"。本 Tile 的外层结构(onTileRequest 的
-// Tile/Timeline/Layout/Resources)本就走 androidx.wear.tiles 这套(已能编译),
-// 故统一收敛到 tiles 这一套(虽被标记 @Deprecated 但在 1.4.0 仍在,自洽可编译),
-// 消除歧义。彻底迁移到 protolayout 属后续工作(需改 setTileTimeline/onTileResourcesRequest 等)。
-import androidx.wear.tiles.*
-import androidx.wear.tiles.material.*
-import androidx.wear.tiles.DimensionBuilders.*
-import androidx.wear.tiles.ModifiersBuilders.*
+import android.content.Context
+import androidx.wear.protolayout.ColorBuilders.argb
+import androidx.wear.protolayout.DimensionBuilders.dp
+import androidx.wear.protolayout.DimensionBuilders.expand
+import androidx.wear.protolayout.DimensionBuilders.wrap
+import androidx.wear.protolayout.LayoutElementBuilders
+import androidx.wear.protolayout.ModifiersBuilders
+import androidx.wear.protolayout.ResourceBuilders
+import androidx.wear.protolayout.TimelineBuilders
+import androidx.wear.protolayout.material.Text
+import androidx.wear.protolayout.material.Typography
+import androidx.wear.tiles.RequestBuilders
+import androidx.wear.tiles.TileBuilders
+import androidx.wear.tiles.TileService
 import com.galaxy.wear.GalaxyWearApplication
 import com.galaxy.wear.domain.model.Phase
 import com.google.common.util.concurrent.Futures
@@ -20,21 +22,26 @@ import com.google.common.util.concurrent.ListenableFuture
 /**
  * GalaxyTileService — Wear OS Tile (glanceable widget)
  *
- * C6 FIX: Unified to use only the traditional protolayout Tiles API.
- * Removed unused Glance imports that were causing API confusion.
+ * 统一走 androidx.wear.protolayout 这一套(现行受支持的 Tiles 布局 API):
+ *   - 布局构建器全部来自 androidx.wear.protolayout.*(LayoutElementBuilders/
+ *     ModifiersBuilders/ColorBuilders/DimensionBuilders + material.Text/Typography)
+ *   - 服务框架仍来自 androidx.wear.tiles(TileService/TileBuilders/RequestBuilders)
+ *   - Tile 用 setTileTimeline(...) 装载时间线;资源用 onTileResourcesRequest 回调
+ * 之前同时 wildcard 了 tiles.* 与 protolayout.* 两套 builder,导致每个 builder 重载歧义、
+ * 且 deprecated-tiles 一套缺 setCorner/ColorBuilders.Color 等成员 —— 收敛到 protolayout 后消除。
  *
  * Shows current phase at a glance on the watch face carousel.
  * P2-FIX: Updates every 60 seconds (was 30s) to reduce battery drain.
  * Phase changes trigger immediate refresh via requestRefresh().
  */
-class GalaxyTileService : androidx.wear.tiles.TileService() {
+class GalaxyTileService : TileService() {
 
     companion object {
         private const val RESOURCES_VERSION = "1"
         private const val REFRESH_INTERVAL_MS = 60000L // P2-FIX: 60s to reduce battery drain
 
         // W16-FIX: Request tile refresh from external callers (e.g., on phase change)
-        fun requestRefresh(context: android.content.Context) {
+        fun requestRefresh(context: Context) {
             try {
                 getUpdater(context).requestUpdate(GalaxyTileService::class.java)
             } catch (e: Exception) {
@@ -49,28 +56,17 @@ class GalaxyTileService : androidx.wear.tiles.TileService() {
         val app = application as GalaxyWearApplication
         val phase = app.phase.value
 
-        return Futures.immediateFuture(
-            TileBuilders.Tile.Builder()
-                .setResourcesVersion(RESOURCES_VERSION)
-                .setFreshnessIntervalMillis(REFRESH_INTERVAL_MS)
-                .setTimeline(
-                    TimelineBuilders.Timeline.Builder()
-                        .addTimelineEntry(
-                            TimelineBuilders.TimelineEntry.Builder()
-                                .setLayout(
-                                    LayoutElementBuilders.Layout.Builder()
-                                        .setRoot(buildLayout(phase))
-                                        .build()
-                                )
-                                .build()
-                        )
-                        .build()
-                )
-                .build()
-        )
+        val tile = TileBuilders.Tile.Builder()
+            .setResourcesVersion(RESOURCES_VERSION)
+            .setFreshnessIntervalMillis(REFRESH_INTERVAL_MS)
+            .setTileTimeline(
+                TimelineBuilders.Timeline.fromLayoutElement(buildLayout(phase))
+            )
+            .build()
+        return Futures.immediateFuture(tile)
     }
 
-    override fun onResourcesRequest(
+    override fun onTileResourcesRequest(
         requestParams: RequestBuilders.ResourcesRequest
     ): ListenableFuture<ResourceBuilders.Resources> {
         return Futures.immediateFuture(
@@ -81,10 +77,11 @@ class GalaxyTileService : androidx.wear.tiles.TileService() {
     }
 
     private fun buildLayout(phase: Phase): LayoutElementBuilders.LayoutElement {
+        // 0xFFxxxxxx 在 Kotlin 里超出 Int 范围是 Long,必须 .toInt() 取得带符号 ARGB Int。
         val (dotColor, label) = when (phase) {
-            Phase.SILENT -> 0xFF333333 to "静默"
-            Phase.LIMINAL -> 0xFF808080 to "临界"
-            Phase.MANIFEST -> 0xFFE0E0E0 to "显现"
+            Phase.SILENT -> 0xFF333333.toInt() to "静默"
+            Phase.LIMINAL -> 0xFF808080.toInt() to "临界"
+            Phase.MANIFEST -> 0xFFE0E0E0.toInt() to "显现"
         }
 
         return LayoutElementBuilders.Box.Builder()
@@ -94,7 +91,7 @@ class GalaxyTileService : androidx.wear.tiles.TileService() {
                 ModifiersBuilders.Modifiers.Builder()
                     .setBackground(
                         ModifiersBuilders.Background.Builder()
-                            .setColor(argb(0xFF000000))
+                            .setColor(argb(0xFF000000.toInt()))
                             .build()
                     )
                     .build()
@@ -107,20 +104,20 @@ class GalaxyTileService : androidx.wear.tiles.TileService() {
                         LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER
                     )
                     .addContent(
-                        // Phase dot
+                        // Phase dot — 圆点(用 Background 的 corner 半径做成圆形)
                         LayoutElementBuilders.Box.Builder()
                             .setWidth(dp(12f))
                             .setHeight(dp(12f))
                             .setModifiers(
                                 ModifiersBuilders.Modifiers.Builder()
-                                    .setCorner(
-                                        ModifiersBuilders.Corner.Builder()
-                                            .setRadius(dp(6f))
-                                            .build()
-                                    )
                                     .setBackground(
                                         ModifiersBuilders.Background.Builder()
-                                            .setColor(argb(dotColor.toInt()))
+                                            .setColor(argb(dotColor))
+                                            .setCorner(
+                                                ModifiersBuilders.Corner.Builder()
+                                                    .setRadius(dp(6f))
+                                                    .build()
+                                            )
                                             .build()
                                     )
                                     .build()
@@ -135,7 +132,7 @@ class GalaxyTileService : androidx.wear.tiles.TileService() {
                     .addContent(
                         Text.Builder(this, label)
                             .setTypography(Typography.TYPOGRAPHY_CAPTION1)
-                            .setColor(argb(dotColor.toInt()))
+                            .setColor(argb(dotColor))
                             .build()
                     )
                     .addContent(
@@ -146,22 +143,11 @@ class GalaxyTileService : androidx.wear.tiles.TileService() {
                     .addContent(
                         Text.Builder(this, "GALAXY")
                             .setTypography(Typography.TYPOGRAPHY_CAPTION2)
-                            .setColor(argb(0xFF555555))
+                            .setColor(argb(0xFF555555.toInt()))
                             .build()
                     )
                     .build()
             )
             .build()
     }
-}
-
-/**
- * Helper to create ARGB color.
- * NOTE: 0xFF000000.toInt() produces -16777216 in Kotlin (signed 32-bit Int overflow),
- * which is expected behavior. ColorBuilders.Color.Builder().setArgb() accepts an Int
- * parameter and interprets the sign bit as the alpha channel (0xFF = 255 = fully opaque).
- * Do NOT "fix" with .toUInt() — the Tiles API requires Int.
- */
-private fun argb(color: Int): ColorBuilders.Color {
-    return ColorBuilders.Color.Builder().setArgb(color).build()
 }

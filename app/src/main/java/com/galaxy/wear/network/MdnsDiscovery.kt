@@ -76,12 +76,12 @@ class MdnsDiscovery(private val context: Context) {
 
             override fun onServiceLost(service: NsdServiceInfo) {}
             override fun onDiscoveryStopped(serviceType: String) {}
-            override fun onStartFailed(serviceType: String, errorCode: Int) {
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
                 Log.w(TAG, "Discovery start failed: $errorCode")
                 result.complete(null)
             }
 
-            override fun onStopFailed(serviceType: String, errorCode: Int) {}
+            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
         }
 
         // FIX #11: Wrap the entire discovery lifecycle in try/finally to ensure

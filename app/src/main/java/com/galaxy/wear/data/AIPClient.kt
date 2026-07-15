@@ -8,12 +8,19 @@ import com.galaxy.wear.GalaxyWearApplication
 import com.ufo.galaxy.shared.protocol.ReconnectionConfig
 import com.ufo.galaxy.shared.protocol.AuthMessage
 import com.ufo.galaxy.shared.protocol.MsgType
+// K2-FIX(801): AipTransportManager 位于共享 transport 模块,补全其包路径导入
+// (与 GalaxyWearApplication.kt 中的引用一致)。
+import com.ufo.galaxy.transport.AipTransportManager
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.*
 import io.ktor.client.plugins.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.plugins.logging.*
 import io.ktor.client.plugins.websocket.*
+// K2-FIX(187/188/189): 请求构建器扩展 url(urlString: String) 与 header(...) 位于
+// io.ktor.client.request 包。缺失该导入时 url("...") 只匹配到 URLBuilder 块重载,
+// 导致 "expected Function2<URLBuilder,URLBuilder,Unit>" 参数类型不匹配。
+import io.ktor.client.request.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.*
@@ -22,6 +29,11 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+// K2-FIX(1030): 显式导入 kotlinx.serialization.Serializable,避免 @Serializable
+// 被通配符导入带入的内部 typealias / java.io.Serializable 遮蔽。显式导入优先级高于
+// 通配符导入,恢复后编译器插件才会为 AIPMessage 生成 serializer() 伴生方法,
+// 从而连带修复所有 .serializer() 未解析与 T 类型推断/重载歧义问题。
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.*
 import okhttp3.CertificatePinner
@@ -254,7 +266,9 @@ class AIPClient(
                                     handleMessage(unpacked)
                                 } else {
                                     try {
-                                        val rawText = frame.readText()
+                                        // K2-FIX(257): readText() 是 Frame.Text 的扩展,不能用于 Frame.Binary。
+                                        // 此处是 MessagePack 解包失败后的 UTF-8 文本回退,直接对字节解码。
+                                        val rawText = frame.data.decodeToString()
                                         handleMessage(rawText)
                                     } catch (e: Exception) {
                                         Log.w(GalaxyWearApplication.TAG, "Failed to parse binary frame: ${e.message}")
@@ -393,7 +407,9 @@ class AIPClient(
         } else {
             // Scope already cancelled, force cleanup synchronously
             runCatching {
-                _session?.close()
+                // K2-FIX(396): WebSocketSession.close() 是 suspend,此处 scope 已取消无法启动协程。
+                // WebSocketSession 实现了 CoroutineScope,用非挂起的 cancel() 强制终止会话即可。
+                _session?.cancel()
                 _session = null
                 serverUrl = ""
                 token = ""
