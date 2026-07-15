@@ -149,16 +149,16 @@ private fun generateQrBitmap(
         for (y in 0 until bitMatrix.height) {
             for (x in 0 until bitMatrix.width) {
                 if (bitMatrix[x, y]) {
-                    val left = x * moduleWidth
-                    val top = y * moduleHeight
-                    // 稍微缩小模块以留出间隙，提高扫描成功率
-                    canvas.drawRect(
-                        left + 0.5f,
-                        top + 0.5f,
-                        left + moduleWidth - 0.5f,
-                        top + moduleHeight - 0.5f,
-                        paint
-                    )
+                    // 显式 Float 局部,避开 K2 在 drawRect(Java float 重载)参数里对链式算术的
+                    // 类型推断歧义(否则报 minus/plus overload ambiguity)。
+                    val left: Float = x * moduleWidth
+                    val top: Float = y * moduleHeight
+                    // 稍微缩小模块以留出间隙,提高扫描成功率
+                    val rectLeft: Float = left + 0.5f
+                    val rectTop: Float = top + 0.5f
+                    val rectRight: Float = left + moduleWidth - 0.5f
+                    val rectBottom: Float = top + moduleHeight - 0.5f
+                    canvas.drawRect(rectLeft, rectTop, rectRight, rectBottom, paint)
                 }
             }
         }

@@ -21,7 +21,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
-import com.galaxy.wear.Phase
+import com.galaxy.wear.domain.model.Phase
 import com.galaxy.wear.ui.theme.*
 import kotlinx.coroutines.launch
 
