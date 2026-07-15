@@ -61,7 +61,7 @@ class MqttGatewayClient(
                     .retain(true)
                     .applyWill()
                 .send()
-                .whenComplete { _, throwable ->
+                .whenComplete { _, throwable: Throwable? ->
                     if (throwable == null) {
                         Log.i(TAG, "MQTT connected")
                         connected = true
