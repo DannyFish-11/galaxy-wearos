@@ -38,7 +38,9 @@ class WatchButtonReceiver : BroadcastReceiver() {
     private var tapCount: Int = 0
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_KEY_EVENT) return
+        // Intent 里没有 ACTION_KEY_EVENT 这个常量(Unresolved),按键广播的 action
+        // 就是清单 intent-filter 里声明的字符串 "android.intent.action.KEY_EVENT"。
+        if (intent.action != "android.intent.action.KEY_EVENT") return
 
         val keyEvent = intent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT)
             ?: return

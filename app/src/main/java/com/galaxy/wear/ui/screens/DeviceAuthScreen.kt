@@ -7,6 +7,10 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,6 +26,8 @@ import androidx.wear.compose.material.*
 import com.galaxy.wear.auth.DeviceFlowManager
 import com.galaxy.wear.auth.DeviceFlowManager.DeviceFlowResult
 import com.galaxy.wear.auth.DeviceFlowManager.FlowState
+import com.galaxy.wear.ui.HapticType
+import com.galaxy.wear.ui.triggerHaptic
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -148,7 +154,7 @@ fun DeviceAuthScreen(
                 contentAlignment = Alignment.Center
             ) {
                 CircularProgressIndicator(
-                    color = MaterialTheme.colors.primary,
+                    indicatorColor = MaterialTheme.colors.primary,
                     strokeWidth = 3.dp,
                     modifier = Modifier.size(32.dp)
                 )
@@ -254,7 +260,7 @@ private fun UserCodeDisplayView(
                     label = { Text("二维码", style = MaterialTheme.typography.caption3) },
                     icon = {
                         Icon(
-                            imageVector = androidx.compose.material.icons.Icons.Default.QrCode,
+                            imageVector = Icons.Default.QrCode,
                             contentDescription = null,
                             modifier = Modifier.size(14.dp)
                         )
@@ -317,6 +323,9 @@ private fun AuthPollingView(
             modifier = Modifier.fillMaxSize()
         ) {
             // 旋转菊花 — 使用 Canvas 绘制圆形进度条
+            // MaterialTheme.colors 是 @Composable 读取,不能在 Canvas 的 DrawScope
+            // lambda(非 @Composable)里调用 —— 先在此处取出,再传进去。
+            val progressColor = MaterialTheme.colors.primary
             Box(
                 modifier = Modifier.size(48.dp),
                 contentAlignment = Alignment.Center
@@ -334,7 +343,7 @@ private fun AuthPollingView(
                     )
                     // 旋转进度弧
                     drawArc(
-                        color = MaterialTheme.colors.primary,
+                        color = progressColor,
                         startAngle = rotation,
                         sweepAngle = 90f,
                         useCenter = false,
@@ -414,7 +423,7 @@ private fun AuthSuccessView(userEmail: String) {
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = androidx.compose.material.icons.Icons.Default.Check,
+                    imageVector = Icons.Default.Check,
                     contentDescription = "授权成功",
                     tint = Color.White,
                     modifier = Modifier.size(32.dp)
@@ -500,7 +509,7 @@ private fun AuthErrorView(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = androidx.compose.material.icons.Icons.Default.Close,
+                    imageVector = Icons.Default.Close,
                     contentDescription = "授权失败",
                     tint = Color.White,
                     modifier = Modifier.size(28.dp)

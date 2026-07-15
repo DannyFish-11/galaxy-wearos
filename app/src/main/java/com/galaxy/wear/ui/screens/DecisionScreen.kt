@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
@@ -82,11 +83,14 @@ fun DecisionScreen(
             }
 
             item {
-                Divider(
-                    color = MaterialTheme.colors.onSurfaceVariant.copy(alpha = 0.2f),
+                // Wear Compose Material 没有 Divider —— 用一条 1dp 高的 Box 充当分隔线,
+                // 避免为一条线额外引入手机版 androidx.compose.material 依赖。
+                Box(
                     modifier = Modifier
                         .fillMaxWidth(0.7f)
                         .padding(vertical = 6.dp)
+                        .height(1.dp)
+                        .background(MaterialTheme.colors.onSurfaceVariant.copy(alpha = 0.2f))
                 )
             }
 
@@ -116,7 +120,7 @@ fun DecisionScreen(
                     },
                     icon = {
                         Icon(
-                            android.R.drawable.ic_btn_speak_now,
+                            painter = painterResource(android.R.drawable.ic_btn_speak_now),
                             contentDescription = "语音",
                             modifier = Modifier.size(20.dp)
                         )
@@ -156,7 +160,7 @@ private fun DecisionOptionChip(
     var pressed by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
         targetValue = if (pressed) 0.96f else 1f,
-        animationSpec = spring(stiffness = 400f, damping = 20f),
+        animationSpec = spring(dampingRatio = 0.6f, stiffness = 400f),
         label = "option_scale_${option.id}"
     )
 
@@ -184,7 +188,7 @@ private fun DecisionOptionChip(
         },
         icon = {
             Icon(
-                option.icon,
+                painter = painterResource(option.icon),
                 contentDescription = null,
                 modifier = Modifier.size(20.dp),
                 tint = if (option.isDestructive) Color.White else MaterialTheme.colors.primary

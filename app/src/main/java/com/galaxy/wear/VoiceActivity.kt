@@ -25,6 +25,8 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
 import com.galaxy.wear.GalaxyWearApplication
 import com.galaxy.wear.domain.model.Phase
+import com.galaxy.wear.ui.HapticType
+import com.galaxy.wear.ui.triggerHaptic
 import com.galaxy.wear.ui.theme.GalaxyWearTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

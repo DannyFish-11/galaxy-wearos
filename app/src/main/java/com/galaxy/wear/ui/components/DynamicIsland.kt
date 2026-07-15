@@ -141,7 +141,7 @@ private fun IslandCapsule(
 ) {
     val scale by animateFloatAsState(
         targetValue = if (count > 0) 1f else 0.88f,
-        animationSpec = spring(stiffness = 380f, damping = 22f),
+        animationSpec = spring(dampingRatio = 0.6f, stiffness = 380f),
         label = "capsule_scale"
     )
 

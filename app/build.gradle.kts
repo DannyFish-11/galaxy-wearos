@@ -21,9 +21,10 @@ android {
         // Only keep needed language resources
         resourceConfigurations += listOf("zh", "en")
 
-        // Wear OS: mark as watch app for Play Store
-        @Suppress("UnstableApiUsage")
-        setMetadata("com.google.android.wearable.standalone", "true")
+        // Wear OS standalone 标记由 AndroidManifest.xml 的
+        // <meta-data android:name="com.google.android.wearable.standalone" android:value="true"/>
+        // 声明(见 app/src/main/AndroidManifest.xml)。build.gradle 里没有 setMetadata 这个 DSL
+        // 函数——原来那行是编译阻塞(Unresolved reference),且与清单里的声明重复,删除。
     }
 
     buildFeatures {
@@ -33,6 +34,13 @@ android {
 
     // Kotlin 2.0+ uses composeCompiler plugin, not composeOptions
     // composeOptions block removed — obsolete in AGP 8.0+
+
+    // Java 目标必须与 Kotlin(jvmTarget=17)一致,否则
+    // "Inconsistent JVM-target: Java(1.8) vs Kotlin(17)" 让 compileDebugKotlin 在校验门就挂。
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
 
     kotlinOptions {
         jvmTarget = "17"
@@ -75,6 +83,29 @@ android {
             buildConfigField("String", "WS_PATH", "\"/ws\"")
             buildConfigField("String", "CERT_PIN_PRIMARY", "\"\"")
             buildConfigField("String", "CERT_PIN_BACKUP", "\"\"")
+        }
+    }
+
+    // HiveMQ MQTT client 传递性引入 Netty,多个 netty-*.jar 各自带一份
+    // META-INF/INDEX.LIST(及 io.netty.versions.properties 等),打 APK 时
+    // mergeDebugJavaResource 因"同名多份"直接失败。这些是 jar 元数据,APK 里用不到,
+    // 统一丢弃即可(assembleDebug 才走到这步,compileDebugKotlin 看不到)。
+    packaging {
+        resources {
+            excludes += setOf(
+                "META-INF/INDEX.LIST",
+                "META-INF/io.netty.versions.properties",
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE",
+                "META-INF/LICENSE.txt",
+                "META-INF/LICENSE.md",
+                "META-INF/LICENSE-notice.md",
+                "META-INF/NOTICE",
+                "META-INF/NOTICE.txt",
+                "META-INF/NOTICE.md",
+                "META-INF/*.kotlin_module",
+                "META-INF/versions/**"
+            )
         }
     }
 
@@ -131,10 +162,25 @@ dependencies {
     implementation("io.ktor:ktor-client-okhttp:2.3.12")
     implementation("io.ktor:ktor-client-websockets:2.3.12")
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.12")
+    // AIPClient / DeviceFlowManager 用到 ContentNegotiation 与 Logging 两个客户端插件
+    // (io.ktor.client.plugins.contentnegotiation / .logging),此前【没声明这两个 artifact】,
+    // 导致 ContentNegotiation/Logging/LogLevel/Logger 全部无法解析 —— 补上。
+    implementation("io.ktor:ktor-client-content-negotiation:2.3.12")
+    implementation("io.ktor:ktor-client-logging:2.3.12")
+
+    // Wear Tiles 的 onTileRequest 必须返回 Guava ListenableFuture 且用 Futures.immediateFuture 构造。
+    // androidx 只传递了 listenablefuture 桩(仅含 ListenableFuture 接口),没有 Futures 工具类 →
+    // GalaxyTileService 的 Futures.* 无法解析。补上完整 Guava(android 变体)。
+    implementation("com.google.guava:guava:33.3.1-android")
 
     // Serialization — JSON + MessagePack dual-format
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
     implementation("org.msgpack:msgpack-core:0.9.8")
+
+    // 二维码(设备登录 QrCodeView / DeviceAuthScreen 用):此前 QrCodeView import 了
+    // com.google.zxing.* 却【没声明依赖】,BitMatrix/MultiFormatWriter 全部无法解析,
+    // 是 QrCodeView 一连串编译错的总根因。补上 ZXing core。
+    implementation("com.google.zxing:core:3.5.3")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")

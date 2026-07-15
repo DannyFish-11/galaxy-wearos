@@ -23,8 +23,8 @@ import com.ufo.galaxy.transport.AipTransportManager
 import com.galaxy.wear.tile.GalaxyTileService
 import com.galaxy.wear.domain.parseDecisionOptions
 import com.galaxy.wear.ui.components.IslandItem
-import com.galaxy.wear.ui.screens.HapticType
-import com.galaxy.wear.ui.screens.triggerHaptic
+import com.galaxy.wear.ui.HapticType
+import com.galaxy.wear.ui.triggerHaptic
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -148,7 +149,15 @@ class GalaxyWearApplication : Application() {
                 scope = appScope
             )
             // PR-AIP-UNIFIED-WEAR: Register WebSocket adapter to unified transport manager.
-            AipTransportManager.getInstance().registerAdapter("websocket", aipClient)
+            // AIPClient 实现的是本仓 com.galaxy.wear.network.GatewayClient,而
+            // AipTransportManager.registerAdapter 需要共享模块的
+            // com.ufo.galaxy.network.GatewayClient —— 两者方法签名一致但属不同类型,
+            // 故用一个轻量适配器桥接,委托到 aipClient 的同名 isConnected()/sendJson()。
+            val wsAdapter = object : com.ufo.galaxy.network.GatewayClient {
+                override fun isConnected(): Boolean = aipClient.isConnected()
+                override fun sendJson(json: String): Boolean = aipClient.sendJson(json)
+            }
+            AipTransportManager.getInstance().registerAdapter("websocket", wsAdapter)
         } catch (e: Exception) {
             Log.e(TAG, "FATAL: AIPClient initialization failed: ${e.message}", e)
             // aipClient remains uninitialized; isAipClientReady() will return false.
@@ -230,7 +239,9 @@ class GalaxyWearApplication : Application() {
                                 val savedUrl = encryptedPrefs.getString(KEY_SERVER_URL, "") ?: ""
                                 val savedToken = encryptedPrefs.getString(KEY_AUTH_TOKEN, "") ?: ""
                                 if (savedUrl.isNotEmpty() && savedToken.isNotEmpty() && isAipClientReady()) {
-                                    aipClient.connect(savedUrl, savedToken, DeviceIdProvider.getOrCreateDeviceId(this))
+                                    // 此处位于 appScope.launch 内,裸 this 指向 CoroutineScope;
+                                    // getOrCreateDeviceId 需要 Context,故显式限定为 Application。
+                                    aipClient.connect(savedUrl, savedToken, DeviceIdProvider.getOrCreateDeviceId(this@GalaxyWearApplication))
                                 }
                             } catch (e: CancellationException) {
                                 Log.d(TAG, "Auto-reconnect cancelled")
@@ -494,6 +505,30 @@ class GalaxyWearApplication : Application() {
                 Log.e(TAG, "Failed to connect: ${e.message}")
             }
         }
+    }
+
+    /**
+     * STAGE-2b: 设备流(RFC 8628)登录成功后的统一桥接入口。
+     *
+     * 此前断裂:DeviceFlowManager 把访问令牌写进 galaxy_auth/access_token,而 connect()
+     * 走的是 galaxy_config/auth_token —— 两套存储不同文件、不同键,从不相交,于是"登录成功"
+     * 也永远连不上。这里作为唯一桥接点,把令牌与服务器地址落到 connect 路径真正读取的
+     * galaxy_config,再立即连接。自动重连回调(onAvailable)之后也能凭这份凭据复连。
+     */
+    fun loginWithToken(serverUrl: String, token: String) {
+        if (serverUrl.isBlank() || token.isBlank()) {
+            Log.w(TAG, "loginWithToken skipped — blank serverUrl or token")
+            return
+        }
+        try {
+            encryptedPrefs.edit()
+                .putString(KEY_SERVER_URL, serverUrl)
+                .putString(KEY_AUTH_TOKEN, token)
+                .apply()
+        } catch (e: Exception) {
+            Log.e(TAG, "Persisting login credentials failed: ${e.message}")
+        }
+        connect(serverUrl, token)
     }
 
     fun disconnect() {

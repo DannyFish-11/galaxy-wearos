@@ -3,6 +3,7 @@ package com.galaxy.wear.ui.screens
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -36,7 +37,9 @@ import kotlinx.coroutines.cancel
 @Composable
 fun SettingsScreen(
     isAmbient: Boolean = false,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    // STAGE-2b: 进入设备流(RFC 8628)登录界面。默认空实现,保持既有调用点兼容。
+    onLogin: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as GalaxyWearApplication
@@ -309,6 +312,22 @@ fun SettingsScreen(
                         label = { Text("Tailscale", style = MaterialTheme.typography.caption3) }
                     )
                 }
+            }
+
+            // STAGE-2b: 设备流登录入口。先用上面的预设/发现选好服务器地址,再点此扫码登录取令牌。
+            item {
+                Spacer(modifier = Modifier.height(8.dp))
+                Chip(
+                    onClick = onLogin,
+                    label = {
+                        Text("设备登录", style = MaterialTheme.typography.caption1)
+                    },
+                    secondaryLabel = {
+                        Text("扫码授权取令牌", style = MaterialTheme.typography.caption3)
+                    },
+                    colors = ChipDefaults.primaryChipColors(),
+                    modifier = Modifier.fillMaxWidth(0.9f)
+                )
             }
 
             item {

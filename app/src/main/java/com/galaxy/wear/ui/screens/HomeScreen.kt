@@ -7,8 +7,13 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -21,7 +26,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
-import com.galaxy.wear.Phase
+import com.galaxy.wear.domain.model.Phase
 import com.galaxy.wear.ui.theme.*
 import kotlinx.coroutines.launch
 
@@ -140,7 +145,7 @@ fun HomeScreen(
                         label = { Text("语音", style = MaterialTheme.typography.caption2) },
                         icon = {
                             Icon(
-                                imageVector = androidx.compose.material.icons.Icons.Default.Mic,
+                                imageVector = Icons.Default.Mic,
                                 contentDescription = null,
                                 modifier = Modifier.size(14.dp)
                             )
@@ -153,7 +158,7 @@ fun HomeScreen(
                         label = { Text("设备", style = MaterialTheme.typography.caption2) },
                         icon = {
                             Icon(
-                                imageVector = androidx.compose.material.icons.Icons.Default.Devices,
+                                imageVector = Icons.Default.Devices,
                                 contentDescription = null,
                                 modifier = Modifier.size(14.dp)
                             )
@@ -166,7 +171,7 @@ fun HomeScreen(
                         label = { Text("设置", style = MaterialTheme.typography.caption2) },
                         icon = {
                             Icon(
-                                imageVector = androidx.compose.material.icons.Icons.Default.Settings,
+                                imageVector = Icons.Default.Settings,
                                 contentDescription = null,
                                 modifier = Modifier.size(14.dp)
                             )
@@ -189,6 +194,7 @@ fun HomeScreen(
     )
 }
 
+@Composable
 private fun PhaseDotsHome(phase: Phase, isAmbient: Boolean = false) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -200,7 +206,7 @@ private fun PhaseDotsHome(phase: Phase, isAmbient: Boolean = false) {
         // SILENT — dark gray
         val silentScale by animateFloatAsState(
             targetValue = if (phase == Phase.SILENT) 1.25f else 0.8f,
-            animationSpec = if (isAmbient) snap() else spring(stiffness = 300f, damping = 15f),
+            animationSpec = if (isAmbient) snap() else spring(dampingRatio = 0.6f, stiffness = 300f),
             label = "dot_silent"
         )
         val silentAlpha by animateFloatAsState(
@@ -213,7 +219,7 @@ private fun PhaseDotsHome(phase: Phase, isAmbient: Boolean = false) {
         // LIMINAL — medium gray (NOT amber)
         val liminalScale by animateFloatAsState(
             targetValue = if (phase == Phase.LIMINAL) 1.25f else 0.8f,
-            animationSpec = if (isAmbient) snap() else spring(stiffness = 300f, damping = 15f),
+            animationSpec = if (isAmbient) snap() else spring(dampingRatio = 0.6f, stiffness = 300f),
             label = "dot_liminal"
         )
         val liminalAlpha by animateFloatAsState(
@@ -226,7 +232,7 @@ private fun PhaseDotsHome(phase: Phase, isAmbient: Boolean = false) {
         // MANIFEST — bright white/gray
         val manifestScale by animateFloatAsState(
             targetValue = if (phase == Phase.MANIFEST) 1.25f else 0.8f,
-            animationSpec = if (isAmbient) snap() else spring(stiffness = 300f, damping = 15f),
+            animationSpec = if (isAmbient) snap() else spring(dampingRatio = 0.6f, stiffness = 300f),
             label = "dot_manifest"
         )
         val manifestAlpha by animateFloatAsState(

@@ -21,7 +21,9 @@ import androidx.wear.compose.material.*
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
+import com.galaxy.wear.auth.DeviceFlowManager
 import com.galaxy.wear.domain.model.Phase
+import com.galaxy.wear.ui.screens.DeviceAuthScreen
 import com.galaxy.wear.ui.screens.DevicesScreen
 import com.galaxy.wear.ui.screens.HomeScreen
 import com.galaxy.wear.ui.screens.SettingsScreen
@@ -31,6 +33,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 
 /**
  * Main Wear OS Activity — Galaxy Watch Entry Point
@@ -88,6 +91,8 @@ class MainActivity : ComponentActivity() {
             GalaxyWearTheme {
                 val navController = rememberSwipeDismissableNavController()
                 val app = application as GalaxyWearApplication
+                // STAGE-2b: 单实例 DeviceFlowManager,供 "auth" 路由的设备流登录使用。
+                val deviceFlowManager = remember { DeviceFlowManager(app) }
                 val phase by app.phase.collectAsState()
                 val islandItems by app.islandItems.collectAsState()
                 // W4-FIX: Read ambient state to control animations
@@ -128,7 +133,28 @@ class MainActivity : ComponentActivity() {
                         composable("settings") {
                             SettingsScreen(
                                 isAmbient = ambient,
-                                onBack = { navController.popBackStack() }
+                                onBack = { navController.popBackStack() },
+                                onLogin = { navController.navigate("auth") }
+                            )
+                        }
+                        // STAGE-2b: 设备流(RFC 8628)登录界面 —— 此前 DeviceAuthScreen 写好却
+                        // 没有任何导航入口(孤儿)。这里接进导航;成功后把令牌桥接进 connect 路径。
+                        composable("auth") {
+                            val serverUrl = app.encryptedPrefs.getString("server_url", "") ?: ""
+                            DeviceAuthScreen(
+                                deviceFlowManager = deviceFlowManager,
+                                serverUrl = serverUrl,
+                                onAuthSuccess = {
+                                    // 设备流令牌已存入 galaxy_auth;经 loginWithToken 落到
+                                    // connect 路径读取的 galaxy_config 并立即连接。
+                                    deviceFlowManager.getToken()?.let {
+                                        app.loginWithToken(serverUrl, it.accessToken)
+                                    }
+                                    navController.navigate("home") {
+                                        popUpTo("home") { inclusive = true }
+                                    }
+                                },
+                                onAuthCancelled = { navController.popBackStack() }
                             )
                         }
                     }

@@ -2,6 +2,7 @@ package com.galaxy.wear.ui.screens
 
 import android.util.Log
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,7 +24,9 @@ import com.ufo.galaxy.shared.protocol.MsgType
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 /**
  * DevicesScreen — PR-DEVICE-LIST-QUERY: Dynamic device status from gateway
@@ -49,7 +52,7 @@ fun DevicesScreen(
 
     // Always include local watch
     val localDevice = DeviceInfo(
-        deviceId = app.aipClient.deviceId,
+        deviceId = app.aipClient.getDeviceId(),
         displayName = "本机手表",
         deviceType = "wear_os",
         status = "online"
@@ -73,13 +76,17 @@ fun DevicesScreen(
             when (msg.type) {
                 MsgType.COMMAND_RESULT -> {
                     val payload = msg.payloadObject
-                    val devicesField = payload["devices"]
+                    // query_devices 的响应把设备数组放在 data.devices(command_result 的 payload
+                    // 只暴露 id/success/data),而不是顶层 devices;两处都兜一下,真实响应才接得住,
+                    // 否则永远走 5s 超时兜底只显示本机。
+                    val dataObj = payload["data"]?.let { runCatching { it.jsonObject }.getOrNull() }
+                    val devicesField = payload["devices"] ?: dataObj?.get("devices")
                     if (devicesField != null) {
                         val parsed = app.aipClient.parseDeviceList(devicesField)
                         val merged = mutableListOf<DeviceInfo>()
 
                         // Add local watch first if not in gateway response
-                        val hasLocal = parsed.any { it.deviceId == app.aipClient.deviceId }
+                        val hasLocal = parsed.any { it.deviceId == app.aipClient.getDeviceId() }
                         if (!hasLocal) {
                             merged.add(localDevice)
                         }
@@ -189,7 +196,7 @@ fun DevicesScreen(
             items(deviceList.size) { index ->
                 DeviceItemChip(
                     device = deviceList[index],
-                    isLocal = deviceList[index].deviceId == app.aipClient.deviceId,
+                    isLocal = deviceList[index].deviceId == app.aipClient.getDeviceId(),
                     onClick = {
                         scope.launch {
                             if (app.isAipClientReady()) {

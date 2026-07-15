@@ -2,6 +2,7 @@ package com.galaxy.wear.ui.screens
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.Intent
 import android.speech.RecognizerIntent
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -9,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -27,9 +29,10 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.wear.compose.material.*
 import com.galaxy.wear.GalaxyWearApplication
-import com.galaxy.wear.Phase
+import com.galaxy.wear.domain.model.Phase
 import com.galaxy.wear.ui.theme.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -130,8 +133,8 @@ fun VoiceScreen(
                         statusText = "聆听中..."
                         waveTime = 0f
                         try {
-                            val intent = RecognizerIntent().apply {
-                                action = RecognizerIntent.ACTION_RECOGNIZE_SPEECH
+                            // RecognizerIntent 构造器私有,不能实例化;须用 Intent(ACTION)。
+                            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                                     RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
