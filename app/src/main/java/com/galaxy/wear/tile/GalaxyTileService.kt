@@ -1,12 +1,17 @@
 package com.galaxy.wear.tile
 
 import android.util.Log
+// 之前同时 wildcard 导入了 androidx.wear.tiles.* 与 androidx.wear.protolayout.*,
+// 两套包各有一份 LayoutElementBuilders / ModifiersBuilders / ColorBuilders /
+// DimensionBuilders / material.Text / Typography,导致每个 builder 都"重载歧义 →
+// 成员(Box/Column/Corner/...)无法解析"。本 Tile 的外层结构(onTileRequest 的
+// Tile/Timeline/Layout/Resources)本就走 androidx.wear.tiles 这套(已能编译),
+// 故统一收敛到 tiles 这一套(虽被标记 @Deprecated 但在 1.4.0 仍在,自洽可编译),
+// 消除歧义。彻底迁移到 protolayout 属后续工作(需改 setTileTimeline/onTileResourcesRequest 等)。
 import androidx.wear.tiles.*
 import androidx.wear.tiles.material.*
-import androidx.wear.protolayout.*
-import androidx.wear.protolayout.material.*
-import androidx.wear.protolayout.DimensionBuilders.*
-import androidx.wear.protolayout.ModifiersBuilders.*
+import androidx.wear.tiles.DimensionBuilders.*
+import androidx.wear.tiles.ModifiersBuilders.*
 import com.galaxy.wear.GalaxyWearApplication
 import com.galaxy.wear.domain.model.Phase
 import com.google.common.util.concurrent.Futures

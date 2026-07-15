@@ -59,7 +59,7 @@ class MqttGatewayClient(
                     .payload("{\"status\":\"offline\"}".toByteArray())
                     .qos(MqttQos.AT_LEAST_ONCE)
                     .retain(true)
-                    .applyWill()
+                    .applyWillPublish()
                 .send()
                 .whenComplete { _, throwable: Throwable? ->
                     if (throwable == null) {
