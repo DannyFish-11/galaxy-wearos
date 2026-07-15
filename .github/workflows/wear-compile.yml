@@ -54,4 +54,5 @@ jobs:
 
       - name: Compile debug Kotlin (:app)
         working-directory: galaxy-wearos
-        run: ./gradlew :app:compileDebugKotlin --no-daemon --stacktrace
+        # 不加 --stacktrace:Kotlin 的 e: file 编译错照常打印,而不被上百行 Gradle 栈淹没。
+        run: ./gradlew :app:compileDebugKotlin --no-daemon

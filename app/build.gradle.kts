@@ -35,6 +35,13 @@ android {
     // Kotlin 2.0+ uses composeCompiler plugin, not composeOptions
     // composeOptions block removed — obsolete in AGP 8.0+
 
+    // Java 目标必须与 Kotlin(jvmTarget=17)一致,否则
+    // "Inconsistent JVM-target: Java(1.8) vs Kotlin(17)" 让 compileDebugKotlin 在校验门就挂。
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
     kotlinOptions {
         jvmTarget = "17"
     }
