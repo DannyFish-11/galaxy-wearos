@@ -24,6 +24,7 @@ import com.ufo.galaxy.shared.protocol.MsgType
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
@@ -75,7 +76,11 @@ fun DevicesScreen(
             when (msg.type) {
                 MsgType.COMMAND_RESULT -> {
                     val payload = msg.payloadObject
-                    val devicesField = payload["devices"]
+                    // query_devices 的响应把设备数组放在 data.devices(command_result 的 payload
+                    // 只暴露 id/success/data),而不是顶层 devices;两处都兜一下,真实响应才接得住,
+                    // 否则永远走 5s 超时兜底只显示本机。
+                    val dataObj = payload["data"]?.let { runCatching { it.jsonObject }.getOrNull() }
+                    val devicesField = payload["devices"] ?: dataObj?.get("devices")
                     if (devicesField != null) {
                         val parsed = app.aipClient.parseDeviceList(devicesField)
                         val merged = mutableListOf<DeviceInfo>()

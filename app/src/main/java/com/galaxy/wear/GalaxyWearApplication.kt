@@ -507,6 +507,30 @@ class GalaxyWearApplication : Application() {
         }
     }
 
+    /**
+     * STAGE-2b: 设备流(RFC 8628)登录成功后的统一桥接入口。
+     *
+     * 此前断裂:DeviceFlowManager 把访问令牌写进 galaxy_auth/access_token,而 connect()
+     * 走的是 galaxy_config/auth_token —— 两套存储不同文件、不同键,从不相交,于是"登录成功"
+     * 也永远连不上。这里作为唯一桥接点,把令牌与服务器地址落到 connect 路径真正读取的
+     * galaxy_config,再立即连接。自动重连回调(onAvailable)之后也能凭这份凭据复连。
+     */
+    fun loginWithToken(serverUrl: String, token: String) {
+        if (serverUrl.isBlank() || token.isBlank()) {
+            Log.w(TAG, "loginWithToken skipped — blank serverUrl or token")
+            return
+        }
+        try {
+            encryptedPrefs.edit()
+                .putString(KEY_SERVER_URL, serverUrl)
+                .putString(KEY_AUTH_TOKEN, token)
+                .apply()
+        } catch (e: Exception) {
+            Log.e(TAG, "Persisting login credentials failed: ${e.message}")
+        }
+        connect(serverUrl, token)
+    }
+
     fun disconnect() {
         // LOW-FIX: Use isTerminal to avoid redundant disconnect calls
         if (_connectionState.value.isTerminal) {
