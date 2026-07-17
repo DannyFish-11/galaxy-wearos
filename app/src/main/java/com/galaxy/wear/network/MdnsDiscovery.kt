@@ -51,7 +51,14 @@ class MdnsDiscovery(private val context: Context) {
 
             override fun onServiceFound(service: NsdServiceInfo) {
                 Log.d(TAG, "Service found: ${service.serviceName} (${service.serviceType})")
-                if (service.serviceType == SERVICE_TYPE) {
+                // ROUND-3-FIX: Android's NSD is inconsistent about the trailing dot.
+                // discoverServices() is invoked with "_galaxy._tcp" (no trailing dot),
+                // but on several Android builds onServiceFound() reports the type WITH
+                // a trailing dot ("_galaxy._tcp."). A strict `==` then never matches, so
+                // on those devices mDNS finds the gateway service yet never resolves it —
+                // LAN auto-discovery silently falls through to Tailscale/manual entry.
+                // Normalize by trimming trailing dots on both sides before comparing.
+                if (service.serviceType.trimEnd('.') == SERVICE_TYPE.trimEnd('.')) {
                     try {
                         nsdManager.resolveService(service, object : NsdManager.ResolveListener {
                             override fun onResolveFailed(s: NsdServiceInfo, errorCode: Int) {
