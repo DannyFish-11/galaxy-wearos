@@ -6,6 +6,7 @@ import android.graphics.Color as AndroidColor
 import android.graphics.Paint
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -16,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -86,10 +88,16 @@ fun QrCodeFullScreen(
     val density = LocalDensity.current
     val screenSize = with(density) { 200.dp } // Wear OS 屏幕大约 200dp
 
+    // ROUND-2-FIX: onBack 此前是死参数 —— 全屏二维码没有任何退出入口
+    // (滑动手势只会把整个 auth 导航目的地弹出,连授权流程一起取消)。
+    // 轻点任意处关闭二维码、返回授权码界面。
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.White)
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = { onBack() })
+            }
             .padding(8.dp),
         contentAlignment = Alignment.Center
     ) {

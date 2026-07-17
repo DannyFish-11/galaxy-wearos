@@ -60,9 +60,29 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // ROUND-2-FIX: Android 13+ requires a runtime request for POST_NOTIFICATIONS;
+    // declaring it in the manifest alone is not enough. Without the grant, the
+    // HITL decision notifications (and the foreground-service status
+    // notification) are silently suppressed by the system.
+    private val notificationPermissionLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) {
+            android.util.Log.w("MainActivity", "POST_NOTIFICATIONS denied — decision/status notifications will be hidden")
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+
+        // ROUND-2-FIX: ask for the notification runtime permission on first launch (API 33+).
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
 
         // W3-FIX: Register lifecycle observer for leak prevention
         lifecycle.addObserver(lifecycleObserver)

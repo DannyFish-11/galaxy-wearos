@@ -32,10 +32,16 @@ class WatchButtonReceiver : BroadcastReceiver() {
         private const val TAG = "Galaxy"
         private const val DOUBLE_TAP_WINDOW_MS = 400L
         private const val LONG_PRESS_MS = 800L
-    }
 
-    private var lastTapTime: Long = 0L
-    private var tapCount: Int = 0
+        // ROUND-2-FIX: tap state MUST live in the companion object. The system
+        // creates a NEW WatchButtonReceiver instance for every broadcast, so
+        // instance fields were always zeroed — double-tap could never fire.
+        // onReceive runs on the main thread, so plain fields are safe here.
+        private var lastTapTime: Long = 0L
+        private var tapCount: Int = 0
+        /** Set once a long-press fires; reset on ACTION_UP so repeats don't relaunch. */
+        private var longPressFired: Boolean = false
+    }
 
     override fun onReceive(context: Context, intent: Intent) {
         // Intent 里没有 ACTION_KEY_EVENT 这个常量(Unresolved),按键广播的 action
@@ -55,34 +61,46 @@ class WatchButtonReceiver : BroadcastReceiver() {
     }
 
     private fun handleKeyDown(context: Context, event: KeyEvent) {
-        val now = System.currentTimeMillis()
+        // ROUND-2-FIX: KeyEvent timestamps are SystemClock.uptimeMillis(), NOT
+        // wall-clock. The old code computed System.currentTimeMillis() -
+        // event.downTime (epoch minus uptime ≈ billions of ms), so pressDuration
+        // was ALWAYS >= LONG_PRESS_MS and every single key-down immediately
+        // launched VoiceActivity as a "long press". Use event.eventTime, which
+        // shares downTime's timebase.
+        val now = event.eventTime
         val pressDuration = now - event.downTime
 
-        // Long press → launch voice
+        // Long press → launch voice (fire once per physical press)
         if (pressDuration >= LONG_PRESS_MS) {
-            Log.i(TAG, "[BUTTON] Long press detected — launching voice")
-            triggerHaptic(context)
-            launchVoice(context)
+            if (!longPressFired) {
+                longPressFired = true
+                Log.i(TAG, "[BUTTON] Long press detected — launching voice")
+                triggerHaptic(context)
+                launchVoice(context)
+            }
             return
         }
 
-        // Double tap detection
-        if (now - lastTapTime <= DOUBLE_TAP_WINDOW_MS) {
-            tapCount++
-            if (tapCount >= 2) {
-                Log.i(TAG, "[BUTTON] Double tap detected — launching voice")
-                triggerHaptic(context)
-                launchVoice(context)
-                tapCount = 0
+        // Double tap detection (only the first DOWN of each press, not key repeats)
+        if (event.repeatCount == 0) {
+            if (now - lastTapTime <= DOUBLE_TAP_WINDOW_MS) {
+                tapCount++
+                if (tapCount >= 2) {
+                    Log.i(TAG, "[BUTTON] Double tap detected — launching voice")
+                    triggerHaptic(context)
+                    launchVoice(context)
+                    tapCount = 0
+                }
+            } else {
+                tapCount = 1
             }
-        } else {
-            tapCount = 1
+            lastTapTime = now
         }
-        lastTapTime = now
     }
 
     private fun handleKeyUp(context: Context) {
-        // Single tap logic can go here if needed
+        // ROUND-2-FIX: re-arm the long-press latch when the button is released.
+        longPressFired = false
     }
 
     private fun launchVoice(context: Context) {

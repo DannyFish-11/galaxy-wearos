@@ -36,9 +36,25 @@ class ReplyReceiver : BroadcastReceiver() {
             return
         }
         val optionId = intent.getStringExtra(EXTRA_OPTION_ID)
-        val voiceInput = intent.getStringExtra(EXTRA_VOICE_INPUT)
+        // ROUND-2-FIX: text/voice entered via the notification's RemoteInput
+        // arrives in the RemoteInput results bundle, NOT as a plain string
+        // extra — getStringExtra(EXTRA_VOICE_INPUT) was always null, so voice
+        // replies silently went out with no voice_input payload.
+        val voiceInput = androidx.core.app.RemoteInput.getResultsFromIntent(intent)
+            ?.getCharSequence(EXTRA_VOICE_INPUT)?.toString()
+            ?: intent.getStringExtra(EXTRA_VOICE_INPUT)
 
         Log.d(TAG, "Reply received: decision=$decisionId, option=$optionId, voice=$voiceInput")
+
+        // ROUND-2-FIX: dismiss the decision notification after any reply —
+        // action buttons don't auto-dismiss (autoCancel only applies to the
+        // content intent), so the answered decision otherwise lingered in the
+        // shade and could be answered a second time.
+        try {
+            androidx.core.app.NotificationManagerCompat.from(context).cancel(decisionId.hashCode())
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to cancel decision notification: ${e.message}")
+        }
 
         val pendingResult = goAsync()
         val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
