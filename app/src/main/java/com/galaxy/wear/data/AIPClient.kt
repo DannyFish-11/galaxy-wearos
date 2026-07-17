@@ -136,6 +136,28 @@ class AIPClient(
     private val _messages = MutableSharedFlow<AIPMessage>(extraBufferCapacity = 64)
     val messages: SharedFlow<AIPMessage> = _messages.asSharedFlow()
 
+    /**
+     * ROUND-3-FIX: guaranteed delivery to upstream observers.
+     * `_messages` is a MutableSharedFlow(extraBufferCapacity = 64) and every producer
+     * used tryEmit(), which DROPS the value (returns false) when the 64-slot buffer is
+     * momentarily full — e.g. a burst of state_event/task_progress frames arriving while
+     * the single collector is briefly blocked on a binder call (startForegroundService /
+     * Vibrator). A dropped DECISION_REQUEST means the HITL loop waits on a human who was
+     * never shown the decision. Fall back to a suspending emit so nothing is silently lost.
+     */
+    private fun emitMessage(msg: AIPMessage) {
+        if (_messages.tryEmit(msg)) return
+        scope.launch {
+            try {
+                _messages.emit(msg)
+            } catch (e: CancellationException) {
+                // scope disposed — nothing more to do
+            } catch (e: Exception) {
+                Log.w(GalaxyWearApplication.TAG, "emitMessage fallback failed: ${e.message}")
+            }
+        }
+    }
+
     private var serverUrl: String = ""
     private var token: String = ""
     private var deviceId: String = ""
@@ -545,7 +567,7 @@ class AIPClient(
                         put("success", json["success"] ?: JsonPrimitive(false))
                         put("data", json["data"] ?: JsonNull)
                     }
-                    _messages.tryEmit(AIPMessage(
+                    emitMessage(AIPMessage(
                         type = MsgType.COMMAND_RESULT,
                         payload = resultPayload,
                         deviceId = deviceId,
@@ -558,7 +580,7 @@ class AIPClient(
                         put("event", json["event"]?.jsonPrimitive?.content ?: "")
                         put("data", json["data"] ?: JsonObject(emptyMap()))
                     }
-                    _messages.tryEmit(AIPMessage(
+                    emitMessage(AIPMessage(
                         type = MsgType.EVENT,
                         payload = eventPayload,
                         deviceId = deviceId
@@ -646,7 +668,7 @@ class AIPClient(
                     }
                     // Emit the message for upstream observers (e.g., logging)
                     if (msgType != null) {
-                        _messages.tryEmit(AIPMessage(
+                        emitMessage(AIPMessage(
                             type = msgType,
                             payload = json["payload"] ?: JsonObject(json.toMap()),
                             deviceId = deviceId,
@@ -663,7 +685,7 @@ class AIPClient(
                             put("msg_type", liquid["msg_type"]?.jsonPrimitive?.content ?: "")
                             put("content", liquid)
                         }
-                        _messages.tryEmit(AIPMessage(
+                        emitMessage(AIPMessage(
                             type = MsgType.LIQUID_EVENT,
                             payload = liquidPayload,
                             deviceId = deviceId
@@ -674,7 +696,7 @@ class AIPClient(
                     // HITL: V2 asks the human to choose. Emit the payload so the
                     // app observer can raise a decision notification; the reply
                     // returns via human_input (ReplyReceiver → sendCommand).
-                    _messages.tryEmit(AIPMessage(
+                    emitMessage(AIPMessage(
                         type = MsgType.DECISION_REQUEST,
                         payload = json["payload"]?.jsonObject ?: JsonObject(emptyMap()),
                         deviceId = deviceId,
@@ -684,7 +706,7 @@ class AIPClient(
                 else -> {
                     // X-API-CR1: Handle any other known MsgType enum values
                     if (msgType != null) {
-                        _messages.tryEmit(AIPMessage(
+                        emitMessage(AIPMessage(
                             type = msgType,
                             payload = json["payload"] ?: JsonObject(json.toMap()),
                             deviceId = deviceId,
