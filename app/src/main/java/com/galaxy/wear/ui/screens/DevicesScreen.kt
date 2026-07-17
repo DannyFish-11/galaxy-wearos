@@ -50,9 +50,14 @@ fun DevicesScreen(
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
+    // FIX: aipClient is lateinit and can be uninitialized when Application
+    // init failed — never touch it without isAipClientReady() or this screen
+    // crashes with UninitializedPropertyAccessException during composition.
+    val clientReady = app.isAipClientReady()
+
     // Always include local watch
     val localDevice = DeviceInfo(
-        deviceId = app.aipClient.getDeviceId(),
+        deviceId = if (clientReady) app.aipClient.getDeviceId() else "",
         displayName = "本机手表",
         deviceType = "wear_os",
         status = "online"
@@ -60,6 +65,13 @@ fun DevicesScreen(
 
     // Fetch device list on screen open
     LaunchedEffect(Unit) {
+        if (!app.isAipClientReady()) {
+            // AIPClient unavailable — degrade to local-only view instead of crashing.
+            isLoading = false
+            deviceList = listOf(localDevice)
+            errorMessage = "服务未就绪,仅显示本机"
+            return@LaunchedEffect
+        }
         isLoading = true
         errorMessage = null
 
@@ -86,7 +98,7 @@ fun DevicesScreen(
                         val merged = mutableListOf<DeviceInfo>()
 
                         // Add local watch first if not in gateway response
-                        val hasLocal = parsed.any { it.deviceId == app.aipClient.getDeviceId() }
+                        val hasLocal = parsed.any { it.deviceId == localDevice.deviceId }
                         if (!hasLocal) {
                             merged.add(localDevice)
                         }
@@ -99,9 +111,15 @@ fun DevicesScreen(
                 }
                 MsgType.EVENT -> {
                     val payload = msg.payloadObject
-                    val eventType = payload["event_type"]?.jsonPrimitive?.content
+                    // FIX: AIPClient normalizes event messages to {event, data}
+                    // (see AIPClient.handleMessage "event" branch) — read those
+                    // keys; the previous "event_type"/"device_id" keys never
+                    // existed, so this branch was dead code.
+                    val eventType = payload["event"]?.jsonPrimitive?.content
                     if (eventType == "device_disconnected") {
-                        val did = payload["device_id"]?.jsonPrimitive?.content
+                        val did = payload["data"]
+                            ?.let { runCatching { it.jsonObject }.getOrNull() }
+                            ?.get("device_id")?.jsonPrimitive?.content
                         if (did != null) {
                             deviceList = deviceList.map {
                                 if (it.deviceId == did) it.copy(status = "offline") else it
@@ -180,10 +198,11 @@ fun DevicesScreen(
             }
 
             // Error
-            if (errorMessage != null && !isLoading) {
+            val err = errorMessage
+            if (err != null && !isLoading) {
                 item {
                     Text(
-                        text = errorMessage!!,
+                        text = err,
                         style = MaterialTheme.typography.caption3,
                         color = ErrorRed.copy(alpha = 0.6f),
                         textAlign = TextAlign.Center,
@@ -196,7 +215,7 @@ fun DevicesScreen(
             items(deviceList.size) { index ->
                 DeviceItemChip(
                     device = deviceList[index],
-                    isLocal = deviceList[index].deviceId == app.aipClient.getDeviceId(),
+                    isLocal = deviceList[index].deviceId == localDevice.deviceId,
                     onClick = {
                         scope.launch {
                             if (app.isAipClientReady()) {

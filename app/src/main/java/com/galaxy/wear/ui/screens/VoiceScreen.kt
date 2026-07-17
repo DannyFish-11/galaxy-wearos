@@ -120,6 +120,16 @@ fun VoiceScreen(
         }
     }
 
+    // FIX: permission request path — previously, if RECORD_AUDIO was not granted
+    // the tap handler silently returned and there was NO way to grant the
+    // permission in-app, leaving the voice screen permanently dead.
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasPermission = granted
+        statusText = if (granted) "按住屏幕说话" else "需要麦克风权限"
+    }
+
     // ── Main Layout ─────────────────────────────────────
     Box(
         modifier = Modifier
@@ -128,7 +138,12 @@ fun VoiceScreen(
             .pointerInput(Unit) {
                 detectTapGestures(
                     onPress = {
-                        if (!hasPermission || isSending) return@detectTapGestures
+                        if (isSending) return@detectTapGestures
+                        if (!hasPermission) {
+                            statusText = "请求麦克风权限..."
+                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            return@detectTapGestures
+                        }
                         isListening = true
                         statusText = "聆听中..."
                         waveTime = 0f
@@ -576,7 +591,10 @@ private fun WaveformCanvas(
         for (i in 0 until barCount) {
             val distFromCenter = kotlin.math.abs(i - barCount / 2f) / (barCount / 2f)
 
-            val height = if (isActive) {
+            // FIX: clamp to minBarHeight — in active mode the three-wave sum can
+            // dip below -1.5f, making the raw height negative and producing
+            // drawRect calls with an invalid (negative) size.
+            val height = (if (isActive) {
                 // Active: lively waveform
                 val wave1 = kotlin.math.sin(effectiveTime * 3f + i * 0.5f)
                 val wave2 = kotlin.math.sin(effectiveTime * 2f + i * 0.8f) * 0.6f
@@ -588,7 +606,7 @@ private fun WaveformCanvas(
                 val wave = kotlin.math.sin(effectiveTime * 1.5f + i * 0.3f) * 0.3f
                 val envelope = 1f - distFromCenter * 0.5f
                 minBarHeight + (wave + 0.5f) * 10f * envelope
-            }
+            }).coerceAtLeast(minBarHeight)
 
             val x = startX + i * (barWidth + barGap)
             val top = canvasCenterY - height / 2
