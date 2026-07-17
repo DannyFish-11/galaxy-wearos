@@ -237,6 +237,18 @@ class AIPClient(
                     return@webSocket
                 }
 
+                // AUTH-WATCHDOG: if the gateway completes the WS upgrade but never
+                // answers auth_ok/auth_failed, the heartbeat is not running yet and
+                // the session would hang forever. Close it so the reconnect logic
+                // (finally-block below) can take over.
+                val authWatchdogJob = scope.launch {
+                    delay(AUTH_TIMEOUT_MS)
+                    if (!isDisposed && _connectionState.value != AIPConnectionState.AUTHENTICATED) {
+                        Log.w(GalaxyWearApplication.TAG, "Auth timeout after ${AUTH_TIMEOUT_MS}ms — closing session")
+                        runCatching { close(CloseReason(CloseReason.Codes.NORMAL, "auth timeout")) }
+                    }
+                }
+
                 // Listen for messages
                 try {
                     for (frame in incoming) {
@@ -293,6 +305,8 @@ class AIPClient(
                     throw e
                 } catch (e: Exception) {
                     Log.e(GalaxyWearApplication.TAG, "WebSocket receive error: ${e.message}")
+                } finally {
+                    authWatchdogJob.cancel()
                 }
             }
         } catch (e: CancellationException) {
@@ -307,7 +321,7 @@ class AIPClient(
             scheduleReconnect()
         } finally {
             heartbeatJob?.cancel()
-            connectMutex.withLock {
+            val endedHealthySession = connectMutex.withLock {
                 _session = null
                 val current = _connectionState.value
                 if (current == AIPConnectionState.CONNECTED ||
@@ -316,6 +330,18 @@ class AIPClient(
                 ) {
                     _connectionState.value = AIPConnectionState.DISCONNECTED
                 }
+                // A session that reached CONNECTED/AUTHENTICATED and ends here
+                // WITHOUT an exception (no catch ran) and WITHOUT a user
+                // disconnect (those set DISCONNECTED first) means the server
+                // closed a healthy connection cleanly.
+                current == AIPConnectionState.CONNECTED || current == AIPConnectionState.AUTHENTICATED
+            }
+            // RECONNECT-FIX: auto-reconnect after a server-initiated close of a
+            // healthy session; otherwise the watch silently stayed offline until
+            // the next network change. user disconnect()/dispose() never reaches
+            // this branch (state is DISCONNECTED / isDisposed by then).
+            if (endedHealthySession && !isDisposed) {
+                scheduleReconnect()
             }
         }
     }
@@ -836,6 +862,9 @@ class AIPClient(
     companion object {
         /** P2-FIX: Maximum WebSocket frame size (512KB) to prevent OOM on malicious payloads. */
         const val MAX_MESSAGE_SIZE = 512 * 1024 // 512KB
+
+        /** Max time to wait for auth_ok after the WS session opens before closing it. */
+        const val AUTH_TIMEOUT_MS = 10_000L
 
         // C4: Dedicated Json instance for companion object (was referencing instance variable)
         private val companionJson = Json {
