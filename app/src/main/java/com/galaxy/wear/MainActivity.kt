@@ -93,6 +93,12 @@ class MainActivity : ComponentActivity() {
                 val app = application as GalaxyWearApplication
                 // STAGE-2b: 单实例 DeviceFlowManager,供 "auth" 路由的设备流登录使用。
                 val deviceFlowManager = remember { DeviceFlowManager(app) }
+                // FIX: close the manager's Ktor HttpClient when the Activity
+                // composition is destroyed — previously it leaked for the
+                // process lifetime once the auth screen was opened.
+                DisposableEffect(deviceFlowManager) {
+                    onDispose { deviceFlowManager.dispose() }
+                }
                 val phase by app.phase.collectAsState()
                 val islandItems by app.islandItems.collectAsState()
                 // W4-FIX: Read ambient state to control animations

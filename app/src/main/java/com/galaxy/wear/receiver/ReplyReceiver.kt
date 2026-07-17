@@ -46,6 +46,12 @@ class ReplyReceiver : BroadcastReceiver() {
         scope.launch {
             try {
                 val app = context.applicationContext as GalaxyWearApplication
+                // Guard: aipClient is lateinit — accessing it before Application
+                // init completes throws UninitializedPropertyAccessException.
+                if (!app.isAipClientReady()) {
+                    Log.e(TAG, "AIPClient not initialized — dropping human input")
+                    return@launch
+                }
 
                 val payload = buildJsonObject {
                     put("decision_id", decisionId)

@@ -1,8 +1,8 @@
 package com.galaxy.wear.domain
 
 import com.galaxy.wear.domain.model.Device
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
@@ -20,7 +20,7 @@ class DeviceRepository {
     )
 
     /** Observable device list for UI consumption */
-    val devices: Flow<List<Device>> = _devices.asStateFlow()
+    val devices: StateFlow<List<Device>> = _devices.asStateFlow()
 
     /** Current snapshot of device list */
     val currentDevices: List<Device> get() = _devices.value
