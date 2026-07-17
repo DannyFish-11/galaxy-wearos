@@ -70,7 +70,7 @@ class GalaxyWearApplication : Application() {
     val deviceRepository = DeviceRepository()
     /** Observable device list for UI — backed by DeviceRepository */
     val devices: StateFlow<List<Device>>
-        get() = deviceRepository.devices as kotlinx.coroutines.flow.StateFlow<List<Device>>
+        get() = deviceRepository.devices
 
     // LIQUID-ISLAND: real backing state for the DynamicIsland composable —
     // previously HomeScreen's `islandItems` parameter had no caller-supplied
@@ -476,7 +476,13 @@ class GalaxyWearApplication : Application() {
         }
     }
 
-    // WARNING-8: connect() now enforces a 15-second timeout to prevent indefinite hangs.
+    // FIX(connect): aipClient.connect() runs for the ENTIRE WebSocket session
+    // lifetime — it only returns when the session ends. The previous
+    // withTimeout(15_000) wrapper therefore killed every healthy session 15s
+    // after connecting, after which nothing reconnected (the cancel path
+    // schedules no retry). Establishment timeouts are enforced inside AIPClient
+    // instead: 10s TCP/TLS connect timeout, 15s WS-upgrade request timeout, and
+    // a 10s auth-ok watchdog that closes a session that never authenticates.
     fun connect(serverUrl: String, token: String, deviceId: String? = null) {
         // Prevent concurrent connect calls
         if (_connectionState.value == AIPConnectionState.CONNECTING) {
@@ -493,12 +499,7 @@ class GalaxyWearApplication : Application() {
         val devId = deviceId ?: DeviceIdProvider.getOrCreateDeviceId(this)
         appScope.launch {
             try {
-                withTimeout(15_000) {
-                    aipClient.connect(serverUrl, token, devId)
-                }
-            } catch (e: TimeoutCancellationException) {
-                Log.e(TAG, "Connection timed out after 15s")
-                _connectionState.value = AIPConnectionState.DISCONNECTED
+                aipClient.connect(serverUrl, token, devId)
             } catch (e: CancellationException) {
                 Log.d(TAG, "Connect cancelled")
             } catch (e: Exception) {
