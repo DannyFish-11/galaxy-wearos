@@ -529,7 +529,23 @@ class GalaxyWearApplication : Application() {
         } catch (e: Exception) {
             Log.e(TAG, "Persisting login credentials failed: ${e.message}")
         }
-        connect(serverUrl, token)
+        // ROUND-2-FIX: if a session is already up (e.g. re-login after token
+        // expiry), connect() short-circuits on CONNECTED/AUTHENTICATED and the
+        // live session would keep the OLD token forever. Disconnect first so
+        // the new credentials actually take effect.
+        if (isAipClientReady() && aipClient.isConnected()) {
+            Log.i(TAG, "Re-login while connected — restarting session with new token")
+            appScope.launch {
+                try {
+                    aipClient.disconnect()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Pre-relogin disconnect failed: ${e.message}")
+                }
+                connect(serverUrl, token)
+            }
+        } else {
+            connect(serverUrl, token)
+        }
     }
 
     fun disconnect() {

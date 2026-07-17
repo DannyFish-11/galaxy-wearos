@@ -32,6 +32,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
+    <!-- ROUND-2-FIX: Android 13+ (API 33, targetSdk=35 强制) 通知运行时权限。
+         缺省时所有通知被系统静默丢弃 —— 决策通知(HITL)永远不可见,
+         前台服务常驻通知也被隐藏。仅在清单声明后才能在运行时用
+         ActivityResultContracts.RequestPermission 请求(见 MainActivity)。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- H3: Auto-restart on boot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
