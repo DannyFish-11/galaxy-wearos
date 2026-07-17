@@ -118,10 +118,13 @@ class AIPClient(
     private val lastPongTimeMs = AtomicLong(0L)
     private val pongTimeoutMs = ReconnectionConfig.HEARTBEAT_TIMEOUT_MS // 10s pong timeout (unified)
 
-    // Reconnect: exponential backoff state (unified with Android)
-    private var reconnectDelayMs = ReconnectionConfig.INITIAL_DELAY_MS // start at 5s
-    private val maxReconnectDelayMs = ReconnectionConfig.MAX_DELAY_MS // cap at 30s
-    private val reconnectJitterMs = ReconnectionConfig.JITTER_MS // +/- 1s jitter (unified)
+    // Reconnect: exponential backoff state (unified with Android).
+    // ROUND-2-FIX: zero-based attempt counter instead of a delay field. The old
+    // delay field only ever grew inside scheduleReconnect's inner catch — but
+    // connect() swallows its own exceptions and reschedules internally, so that
+    // catch never ran and every retry was pinned at a constant ~10s forever
+    // (no exponential backoff, no cap). Reset to 0 on TCP connect and auth_ok.
+    private var reconnectAttempt = 0
 
     // PR-CR1: AtomicBoolean (not ThreadLocal) for coroutine-safe routing loop detection.
     // ThreadLocal is unreliable in coroutines ( Dispatchers.IO thread migration ).
@@ -211,8 +214,8 @@ class AIPClient(
 
                 Log.i(GalaxyWearApplication.TAG, "WebSocket connected: $wsUrl")
 
-                // Reset reconnect delay on successful connection (unified initial delay)
-                reconnectDelayMs = ReconnectionConfig.INITIAL_DELAY_MS
+                // Reset reconnect backoff on successful connection (unified initial delay)
+                reconnectAttempt = 0
 
                 // PR-AUTH-UNIFIED: Send canonical AuthMessage (shared with Android).
                 // The HTTP Authorization header is retained as a compatibility fallback
@@ -524,7 +527,7 @@ class AIPClient(
                 "auth_ok" -> {
                     _connectionState.value = AIPConnectionState.AUTHENTICATED
                     // Reset backoff on successful auth
-                    reconnectDelayMs = 5000L
+                    reconnectAttempt = 0
                     startHeartbeat()
                 }
                 "auth_failed" -> {
@@ -733,6 +736,14 @@ class AIPClient(
                     if (timeSinceLastPong > heartbeatIntervalMs + pongTimeoutMs) { // interval + timeout grace
                         Log.w(GalaxyWearApplication.TAG, "Heartbeat: pong timeout (${timeSinceLastPong}ms), reconnecting")
                         _connectionState.value = AIPConnectionState.ERROR
+                        // ROUND-2-FIX: close the stale session BEFORE reconnecting.
+                        // Previously the dead session's receive loop kept running while
+                        // the reconnect opened a second WebSocket; when the old session
+                        // finally ended, its finally-block nulled the NEW session's
+                        // _session reference and clobbered its state to DISCONNECTED.
+                        runCatching {
+                            session.close(CloseReason(CloseReason.Codes.NORMAL, "pong timeout"))
+                        }.onFailure { Log.w(GalaxyWearApplication.TAG, "Heartbeat: stale session close failed: ${it.message}") }
                         scheduleReconnect()
                         break
                     }
@@ -753,6 +764,13 @@ class AIPClient(
                     break
                 } catch (e: Exception) {
                     Log.w(GalaxyWearApplication.TAG, "Heartbeat failed: ${e.message}")
+                    // ROUND-2-FIX: close the broken session before reconnecting so
+                    // its receive loop exits instead of running alongside the new
+                    // connection (same double-session corruption as pong timeout).
+                    // (session is scoped to the try-block; re-read _session here.)
+                    runCatching {
+                        _session?.close(CloseReason(CloseReason.Codes.NORMAL, "heartbeat failure"))
+                    }.onFailure { Log.w(GalaxyWearApplication.TAG, "Heartbeat: session close failed: ${it.message}") }
                     scheduleReconnect()
                     break
                 }
@@ -763,14 +781,33 @@ class AIPClient(
     private fun scheduleReconnect() {
         // Don't schedule if disposed or already reconnecting
         if (isDisposed) return
+        // ROUND-2-FIX: never reconnect with cleared credentials. disconnect()
+        // blanks serverUrl/token; if an in-flight connect() fails right after a
+        // user disconnect, the old code scheduled a reconnect to an empty URL
+        // and looped on it forever.
+        if (serverUrl.isBlank() || token.isBlank()) {
+            Log.w(GalaxyWearApplication.TAG, "Reconnect skipped — no stored credentials (disconnected)")
+            return
+        }
         reconnectJob?.cancel()
+
+        // ROUND-2-FIX: true exponential backoff — grow the attempt counter on
+        // every consecutive failure right here (the previous growth site in the
+        // job's catch was unreachable, pinning retries at a constant delay).
+        // computeDelay: 0→5s, 1→10s, 2→20s, ≥3→30s cap (+jitter).
+        val attempt = reconnectAttempt
+        reconnectAttempt = (reconnectAttempt + 1).coerceAtMost(MAX_BACKOFF_ATTEMPT)
+        val actualDelay = ReconnectionConfig.computeDelay(attempt)
 
         // W14-FIX: Acquire partial wake lock during reconnect to prevent CPU sleep
         val wakeLock = try {
             val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
             val wl = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Galaxy:Reconnect")
             wl.setReferenceCounted(false)
-            wl.acquire(10 * 1000L) // 10s timeout — enough for reconnect attempt
+            // ROUND-2-FIX: timeout must cover the backoff delay itself (was 10s,
+            // shorter than capped backoff delays, though Android auto-releases
+            // on timeout so this is belt-and-braces).
+            wl.acquire(actualDelay + 15 * 1000L)
             wl
         } catch (e: Exception) {
             Log.w(GalaxyWearApplication.TAG, "Failed to acquire wake lock: ${e.message}")
@@ -779,11 +816,7 @@ class AIPClient(
 
         reconnectJob = scope.launch {
             try {
-                // PR-RECONNECT-UNIFIED: Use shared ReconnectionConfig for exponential backoff.
-                val actualDelay = ReconnectionConfig.computeDelay(
-                    (reconnectDelayMs / ReconnectionConfig.INITIAL_DELAY_MS).toInt().coerceAtLeast(0)
-                )
-                Log.i(GalaxyWearApplication.TAG, "Reconnect scheduled in ${actualDelay}ms")
+                Log.i(GalaxyWearApplication.TAG, "Reconnect scheduled in ${actualDelay}ms (attempt ${attempt + 1})")
                 delay(actualDelay)
                 if (isDisposed) return@launch
                 val current = _connectionState.value
@@ -794,10 +827,10 @@ class AIPClient(
                     } catch (e: CancellationException) {
                         // Normal shutdown
                     } catch (e: Exception) {
+                        // connect() normally handles its own failures and
+                        // reschedules via scheduleReconnect(); reaching here is
+                        // unexpected — backoff already advanced above.
                         Log.e(GalaxyWearApplication.TAG, "Reconnect failed: ${e.message}")
-                        // Increase backoff for next attempt (unified multiplier)
-                        reconnectDelayMs = (reconnectDelayMs * ReconnectionConfig.MULTIPLIER)
-                            .toLong().coerceAtMost(ReconnectionConfig.MAX_DELAY_MS)
                     }
                 }
             } finally {
@@ -865,6 +898,9 @@ class AIPClient(
 
         /** Max time to wait for auth_ok after the WS session opens before closing it. */
         const val AUTH_TIMEOUT_MS = 10_000L
+
+        /** Cap on the backoff attempt counter; delay is already capped at 30s by attempt 3. */
+        private const val MAX_BACKOFF_ATTEMPT = 8
 
         // C4: Dedicated Json instance for companion object (was referencing instance variable)
         private val companionJson = Json {
