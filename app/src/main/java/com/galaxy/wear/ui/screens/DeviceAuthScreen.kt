@@ -3,7 +3,6 @@ package com.galaxy.wear.ui.screens
 import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -16,8 +15,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,15 +55,21 @@ fun DeviceAuthScreen(
     var showQrCode by remember { mutableStateOf(false) }
     // 授权码信息（用于二维码）
     var verificationUriComplete by remember { mutableStateOf("") }
+    // ROUND-2-FIX: 记住最近一次 AwaitingAuth 信息。轮询从拿到 device_code 的
+    // 同一刻就开始了,若 Polling 态单独占用界面,授权码会一闪而过(≈0ms),
+    // 用户根本来不及在手机上输入 —— 整个 RFC 8628 流程因此不可用。
+    // 授权期间(AwaitingAuth + Polling)始终展示授权码。
+    var lastAwaiting by remember { mutableStateOf<FlowState.AwaitingAuth?>(null) }
 
     // 监听 DeviceFlowManager 状态变化
     DisposableEffect(deviceFlowManager) {
         val listener = object : DeviceFlowManager.FlowStateListener {
             override fun onStateChanged(state: FlowState) {
                 currentState = state
-                // 保存完整验证 URI 用于二维码
+                // 保存完整验证 URI 用于二维码 + 记住授权码供轮询期间持续展示
                 if (state is FlowState.AwaitingAuth) {
                     verificationUriComplete = "${state.verificationUri}?user_code=${state.userCode}"
+                    lastAwaiting = state
                 }
             }
         }
@@ -118,32 +121,38 @@ fun DeviceAuthScreen(
             val message = (currentState as FlowState.Error).message
             AuthErrorView(message = message, onDismiss = onAuthCancelled)
         }
-        currentState is FlowState.Polling -> {
-            // 界面 2: 轮询中
-            val state = currentState as FlowState.Polling
-            AuthPollingView(
-                userCode = state.userCode,
-                remainingSeconds = state.remainingSeconds,
-                onCancel = {
-                    deviceFlowManager.cancelFlow()
-                    onAuthCancelled()
+        currentState is FlowState.AwaitingAuth || currentState is FlowState.Polling -> {
+            // 界面 1+2 合并: 整个授权期间(AwaitingAuth → Polling)持续显示授权码,
+            // 轮询倒计时实时刷新;取消按钮行为不变。
+            val awaiting = lastAwaiting
+            val polling = (currentState as? FlowState.Polling)
+            if (awaiting == null) {
+                // 尚未拿到授权码(理论瞬时态)—— 显示加载菊花
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        indicatorColor = MaterialTheme.colors.primary,
+                        strokeWidth = 3.dp,
+                        modifier = Modifier.size(32.dp)
+                    )
                 }
-            )
-        }
-        currentState is FlowState.AwaitingAuth -> {
-            // 界面 1: 显示授权码
-            val state = currentState as FlowState.AwaitingAuth
-            UserCodeDisplayView(
-                userCode = state.userCode,
-                verificationUri = state.verificationUri,
-                elapsedSeconds = state.elapsedSeconds,
-                expiresIn = state.expiresIn,
-                onShowQrCode = { showQrCode = true },
-                onCancel = {
-                    deviceFlowManager.cancelFlow()
-                    onAuthCancelled()
-                }
-            )
+            } else {
+                UserCodeDisplayView(
+                    userCode = awaiting.userCode,
+                    verificationUri = awaiting.verificationUri,
+                    remainingSeconds = polling?.remainingSeconds ?: awaiting.expiresIn,
+                    isPolling = polling != null,
+                    onShowQrCode = { showQrCode = true },
+                    onCancel = {
+                        deviceFlowManager.cancelFlow()
+                        onAuthCancelled()
+                    }
+                )
+            }
         }
         else -> {
             // 初始加载中
@@ -175,16 +184,15 @@ fun DeviceAuthScreen(
 private fun UserCodeDisplayView(
     userCode: String,
     verificationUri: String,
-    elapsedSeconds: Int,
-    expiresIn: Int,
+    remainingSeconds: Int,
+    isPolling: Boolean,
     onShowQrCode: () -> Unit,
     onCancel: () -> Unit
 ) {
     val context = LocalContext.current
-    // 倒计时剩余秒数
-    val remainingSeconds = (expiresIn - elapsedSeconds).coerceAtLeast(0)
-    val remainingMinutes = remainingSeconds / 60
-    val remainingSecs = remainingSeconds % 60
+    // 倒计时剩余秒数（由 Polling 状态实时下发）
+    val remainingMinutes = remainingSeconds.coerceAtLeast(0) / 60
+    val remainingSecs = remainingSeconds.coerceAtLeast(0) % 60
 
     Box(
         modifier = Modifier
@@ -239,9 +247,10 @@ private fun UserCodeDisplayView(
                 modifier = Modifier.padding(horizontal = 4.dp)
             )
 
-            // 剩余时间
+            // 剩余时间 + 轮询中提示
             Text(
-                text = "剩余 ${remainingMinutes}分${remainingSecs}秒",
+                text = if (isPolling) "等待授权 · 剩余 ${remainingMinutes}分${remainingSecs}秒"
+                       else "剩余 ${remainingMinutes}分${remainingSecs}秒",
                 style = MaterialTheme.typography.caption3,
                 color = Color(0xFF666666),
                 textAlign = TextAlign.Center,
@@ -275,107 +284,6 @@ private fun UserCodeDisplayView(
                     colors = ChipDefaults.secondaryChipColors()
                 )
             }
-        }
-    }
-}
-
-/**
- * 界面 2 — 授权中（轮询状态）
- *
- * 圆形布局优化：
- * - 中心旋转菊花动画
- * - "等待授权..." 文字
- * - 倒计时显示
- * - 取消按钮
- */
-@Composable
-private fun AuthPollingView(
-    userCode: String,
-    remainingSeconds: Int,
-    onCancel: () -> Unit
-) {
-    val context = LocalContext.current
-    // 旋转动画
-    val infiniteTransition = rememberInfiniteTransition(label = "spinner")
-    val rotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "rotation"
-    )
-
-    val minutes = remainingSeconds / 60
-    val seconds = remainingSeconds % 60
-    val timeStr = "${minutes}分${seconds.toString().padStart(2, '0')}秒"
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
-            modifier = Modifier.fillMaxSize()
-        ) {
-            // 旋转菊花 — 使用 Canvas 绘制圆形进度条
-            // MaterialTheme.colors 是 @Composable 读取,不能在 Canvas 的 DrawScope
-            // lambda(非 @Composable)里调用 —— 先在此处取出,再传进去。
-            val progressColor = MaterialTheme.colors.primary
-            Box(
-                modifier = Modifier.size(48.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val strokeWidth = 3.dp.toPx()
-                    val radius = size.minDimension / 2f - strokeWidth
-                    // 背景圆环
-                    drawArc(
-                        color = Color(0xFF333333),
-                        startAngle = 0f,
-                        sweepAngle = 360f,
-                        useCenter = false,
-                        style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-                    )
-                    // 旋转进度弧
-                    drawArc(
-                        color = progressColor,
-                        startAngle = rotation,
-                        sweepAngle = 90f,
-                        useCenter = false,
-                        style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-                    )
-                }
-            }
-
-            // 等待文字
-            Text(
-                text = "等待授权...",
-                style = MaterialTheme.typography.title3,
-                color = MaterialTheme.colors.primary,
-                textAlign = TextAlign.Center,
-                maxLines = 1
-            )
-
-            // 倒计时
-            Text(
-                text = "剩余 $timeStr",
-                style = MaterialTheme.typography.caption2,
-                color = Color(0xFF808080),
-                textAlign = TextAlign.Center,
-                maxLines = 1
-            )
-
-            // 取消按钮
-            CompactChip(
-                onClick = onCancel,
-                label = { Text("取消", style = MaterialTheme.typography.caption2) },
-                colors = ChipDefaults.secondaryChipColors()
-            )
         }
     }
 }
