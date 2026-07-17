@@ -57,7 +57,7 @@ class DeviceFlowManager(private val context: Context) {
         private const val KEY_EXPIRES_AT = "expires_at"
         private const val KEY_USER_EMAIL = "user_email"
         private const val KEY_USER_NAME = "user_name"
-        /** 轮询间隔（毫秒） */
+        /** 默认轮询间隔（毫秒）—— RFC 8628 §3.3 未下发 interval 时按 5s */
         private const val POLL_INTERVAL_MS = 5000L
         /** 轮询超时（毫秒） */
         private const val POLL_TIMEOUT_MS = 1800_000L // 30 分钟
@@ -265,7 +265,9 @@ class DeviceFlowManager(private val context: Context) {
             val pollResult = pollForToken(
                 deviceCode = authResponse.deviceCode,
                 serverUrl = serverUrl,
-                expiresIn = authResponse.expiresIn
+                expiresIn = authResponse.expiresIn,
+                userCode = authResponse.userCode,
+                intervalSeconds = authResponse.interval
             )
 
             when {
@@ -370,18 +372,27 @@ class DeviceFlowManager(private val context: Context) {
      * @param deviceCode 设备码
      * @param serverUrl 后端服务器地址
      * @param expiresIn 设备码有效期（秒）
+     * @param userCode 用户码（仅用于状态回调展示，不参与请求）
+     * @param intervalSeconds RFC 8628 §3.3 服务端返回的最小轮询间隔（秒），缺省 5 秒
      * @return PollResponse? 成功返回响应，超时返回 null
      */
     suspend fun pollForToken(
         deviceCode: String,
         serverUrl: String,
-        expiresIn: Int = 1800
+        expiresIn: Int = 1800,
+        userCode: String = "",
+        intervalSeconds: Int = (POLL_INTERVAL_MS / 1000L).toInt()
     ): PollResponse? {
         val url = buildApiUrl(serverUrl, "/auth/oauth/device/poll")
         val startTime = System.currentTimeMillis()
         val timeoutMs = (expiresIn * 1000L).coerceAtMost(POLL_TIMEOUT_MS)
+        // ROUND-2-FIX (RFC 8628 §3.5): 轮询间隔必须采用服务端下发的 interval,
+        // 而不是写死的 5s —— 服务端配 interval=10 时旧实现仍每 5s 轮询,
+        // 触发 slow_down 限流甚至封禁;且 slow_down 后间隔须对后续所有请求
+        // 永久 +5s,旧实现只延迟一次、continue 还跳过当次正常间隔。
+        var pollIntervalMs = (intervalSeconds.coerceAtLeast(1)) * 1000L
 
-        Log.d(TAG, "Starting token polling, timeout: ${timeoutMs}ms")
+        Log.d(TAG, "Starting token polling, timeout: ${timeoutMs}ms, interval: ${pollIntervalMs}ms")
 
         while (currentCoroutineContext().isActive && !isCancelled) {
             val elapsed = System.currentTimeMillis() - startTime
@@ -392,7 +403,10 @@ class DeviceFlowManager(private val context: Context) {
                 return null
             }
 
-            emitState(FlowState.Polling("", deviceCode, remainingSeconds))
+            // ROUND-2-FIX: Polling 状态带上真实 userCode —— 轮询立即开始,
+            // 若 Polling 不带 userCode,UI 的授权码展示态会被轮询态瞬间覆盖,
+            // 用户根本来不及看到授权码。
+            emitState(FlowState.Polling(userCode, deviceCode, remainingSeconds))
 
             try {
                 val response = httpClient.post(url) {
@@ -408,12 +422,14 @@ class DeviceFlowManager(private val context: Context) {
                         // 检查是否有错误
                         when (body.error) {
                             "authorization_pending" -> {
-                                Log.d(TAG, "Authorization pending, retry in ${POLL_INTERVAL_MS}ms")
+                                Log.d(TAG, "Authorization pending, retry in ${pollIntervalMs}ms")
                             }
                             "slow_down" -> {
-                                Log.d(TAG, "Slow down requested")
-                                delay(POLL_INTERVAL_MS * 2)
-                                continue
+                                // RFC 8628 §3.5: on slow_down the interval MUST be
+                                // increased by 5 seconds for this AND ALL SUBSEQUENT
+                                // requests (then fall through to the normal delay).
+                                pollIntervalMs += 5000L
+                                Log.d(TAG, "Slow down requested — interval increased to ${pollIntervalMs}ms")
                             }
                             "expired_token" -> {
                                 Log.w(TAG, "Device code expired")
@@ -446,7 +462,7 @@ class DeviceFlowManager(private val context: Context) {
                 Log.w(TAG, "Poll request error: ${e.message}")
             }
 
-            delay(POLL_INTERVAL_MS)
+            delay(pollIntervalMs)
         }
 
         // 被取消或协程不再活跃
@@ -538,9 +554,19 @@ class DeviceFlowManager(private val context: Context) {
 
     /**
      * 构建完整的 API URL
+     *
+     * ROUND-2-FIX: 存储的 server_url 是 WebSocket 地址(mDNS/Tailscale 发现
+     * 产出 ws:// / wss://),而设备流两个端点是普通 HTTP POST —— OkHttp 直接
+     * 拒绝 ws/wss scheme,导致"自动发现网关 → 设备登录"链路永远失败。
+     * 这里把 ws→http、wss→https 归一化后再拼接。
      */
     private fun buildApiUrl(baseUrl: String, path: String): String {
-        val url = baseUrl.trimEnd('/')
+        val trimmed = baseUrl.trim().trimEnd('/')
+        val url = when {
+            trimmed.startsWith("wss://") -> "https://" + trimmed.removePrefix("wss://")
+            trimmed.startsWith("ws://") -> "http://" + trimmed.removePrefix("ws://")
+            else -> trimmed
+        }
         val cleanPath = path.trimStart('/')
         return "$url/$cleanPath"
     }

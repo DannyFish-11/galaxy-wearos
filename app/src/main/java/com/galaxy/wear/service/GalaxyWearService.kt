@@ -37,6 +37,11 @@ class GalaxyWearService : LifecycleService() {
 
     companion object {
         const val CHANNEL_ID = "galaxy_wear"
+        /** ROUND-2-FIX: HITL 决策通知专用高重要性渠道。原实现把决策通知发到
+         * 常驻服务用的 IMPORTANCE_LOW 渠道 —— Android O+ 上渠道重要性压过
+         * NotificationCompat 的 setPriority/setVibrate,导致决策提醒无声无振
+         * 无抬头,用户永远注意不到"需要人工决策"。 */
+        const val CHANNEL_ID_DECISIONS = "galaxy_wear_decisions"
         const val NOTIFICATION_ID = 1
         const val ACTION_DISCONNECT = "com.galaxy.wear.DISCONNECT"
         // HITL: raise a decision notification from an incoming decision_request.
@@ -126,6 +131,7 @@ class GalaxyWearService : LifecycleService() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Galaxy Wear",
@@ -134,8 +140,19 @@ class GalaxyWearService : LifecycleService() {
                 description = "Galaxy Wear OS background service"
                 setShowBadge(false)
             }
-            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             nm.createNotificationChannel(channel)
+            // ROUND-2-FIX: separate HIGH-importance channel for HITL decisions so
+            // they actually alert (sound/vibration/heads-up) instead of inheriting
+            // the silent LOW importance of the persistent-service channel.
+            val decisionChannel = NotificationChannel(
+                CHANNEL_ID_DECISIONS,
+                "Galaxy 决策提醒",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "OpenClawd 需要人工决策时的提醒"
+                enableVibration(true)
+            }
+            nm.createNotificationChannel(decisionChannel)
         }
     }
 
@@ -302,7 +319,7 @@ class GalaxyWearService : LifecycleService() {
         ).addRemoteInput(remoteInput).build()
         wearableExtender.addAction(replyAction)
 
-        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID_DECISIONS)
             .setContentTitle("⚠ $title")
             .setContentText(summary)
             .setSmallIcon(android.R.drawable.ic_dialog_alert)

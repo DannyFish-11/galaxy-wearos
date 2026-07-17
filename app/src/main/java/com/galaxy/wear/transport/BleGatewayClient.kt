@@ -52,6 +52,10 @@ class BleGatewayClient(
     private var gatt: BluetoothGatt? = null
 
     @Volatile private var connected = false
+    /** ROUND-2-FIX: distinguishes user-initiated disconnect from a link drop.
+     * The GATT callback fires STATE_DISCONNECTED in BOTH cases; without this
+     * flag, an explicit disconnect() also scheduled an auto-reconnect 10s later. */
+    @Volatile private var manualDisconnect = false
     private val pendingMessages = ConcurrentLinkedQueue<String>()
 
     /** Thread-safe scan results — accessed from Binder (scan callback) and main threads */
@@ -145,10 +149,18 @@ class BleGatewayClient(
             Log.e(TAG, "BLE connect permissions not granted")
             return false
         }
-        val device = scanResults[address] ?: return false
+        // ROUND-2-FIX: fall back to the adapter's known-device cache so
+        // auto-reconnect works after scanResults was cleared (getRemoteDevice
+        // returns a BluetoothDevice for any valid MAC without a prior scan).
+        val device = scanResults[address]
+            ?: try { btAdapter?.getRemoteDevice(address) } catch (e: Exception) { null }
+            ?: return false
 
         // FIX #9: Clear scan results after locating target device to free memory
         scanResults.clear()
+
+        // ROUND-2-FIX: new (re)connection attempt — re-arm auto-reconnect.
+        manualDisconnect = false
 
         // FIX #3: Cancel any pending reconnect runnable before starting new connection
         reconnectRunnable?.let { handler.removeCallbacks(it) }
@@ -167,9 +179,22 @@ class BleGatewayClient(
                     BluetoothProfile.STATE_DISCONNECTED -> {
                         Log.i(TAG, "Disconnected")
                         connected = false
+                        // ROUND-2-FIX: an explicit disconnect() also produces
+                        // STATE_DISCONNECTED — do NOT auto-reconnect in that case.
+                        if (manualDisconnect) {
+                            Log.i(TAG, "Manual disconnect — skipping auto-reconnect")
+                            return
+                        }
                         // FIX #2: Enforce maximum reconnect retry limit to prevent battery drain
                         val retries = reconnectCount.incrementAndGet()
                         if (retries <= MAX_RECONNECT_RETRIES) {
+                            // ROUND-2-FIX: close the dead GATT client before redialing.
+                            // Each reconnect previously created a fresh connectGatt
+                            // client while the old one stayed open, leaking one GATT
+                            // client interface per drop until the per-app pool was
+                            // exhausted (connectGatt then returns null forever).
+                            try { gatt.close() } catch (e: Exception) { Log.w(TAG, "gatt.close before reconnect failed: ${e.message}") }
+                            if (this@BleGatewayClient.gatt === gatt) this@BleGatewayClient.gatt = null
                             Log.i(TAG, "Reconnect attempt $retries/$MAX_RECONNECT_RETRIES in 10s")
                             reconnectRunnable = Runnable { connect(address) }
                             reconnectRunnable?.let { handler.postDelayed(it, 10000) }
@@ -235,6 +260,9 @@ class BleGatewayClient(
 
     fun disconnect() {
         connected = false
+        // ROUND-2-FIX: mark as user-initiated BEFORE gatt.disconnect() so the
+        // async STATE_DISCONNECTED callback doesn't schedule an auto-reconnect.
+        manualDisconnect = true
         // FIX #3: Cancel all pending Handler callbacks to prevent leaks
         reconnectRunnable?.let { handler.removeCallbacks(it) }
         reconnectRunnable = null
