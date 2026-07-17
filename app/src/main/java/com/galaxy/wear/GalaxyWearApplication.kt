@@ -622,16 +622,28 @@ class GalaxyWearApplication : Application() {
     }
 
     // CRITICAL-FIX: onTerminate() is NEVER called on real Android devices — it only
-    // runs in emulator. We MUST also unregister in onTrimMemory() to prevent the
-    // NetworkCallback from leaking for the entire app lifecycle.
+    // runs in emulator. We rely on onTrimMemory() for best-effort cleanup.
+    //
+    // ROUND-3-FIX: only release the NetworkCallback at TRIM_MEMORY_COMPLETE.
+    // Previously this fired at `level >= TRIM_MEMORY_MODERATE`. TRIM_MEMORY_MODERATE
+    // (and BACKGROUND) are ROUTINE background states the system delivers whenever a
+    // backgrounded watch app sits mid-LRU under memory pressure — i.e. almost all the
+    // time on Wear OS, since the watch face owns the foreground. Because the callback
+    // is (re)registered ONLY in onCreate(), unregistering at MODERATE permanently
+    // killed the onAvailable() auto-reconnect path for the rest of the process
+    // lifetime: walk out of Wi-Fi range and back and the watch never reconnects until
+    // a full relaunch. TRIM_MEMORY_COMPLETE is the only level that signals the process
+    // is about to be reclaimed, so that is where cleanup is both safe and useful; at
+    // every lower level the callback must stay registered so network recovery still
+    // triggers a reconnect.
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        if (level >= TRIM_MEMORY_MODERATE) {
+        if (level >= TRIM_MEMORY_COMPLETE) {
             networkCallback?.let { cb ->
                 try {
                     val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
                     cm.unregisterNetworkCallback(cb)
-                    Log.d(TAG, "NetworkCallback unregistered in onTrimMemory")
+                    Log.d(TAG, "NetworkCallback unregistered in onTrimMemory(COMPLETE)")
                 } catch (e: Exception) {
                     Log.d(TAG, "NetworkCallback unregister in onTrimMemory failed: ${e.message}")
                 }
