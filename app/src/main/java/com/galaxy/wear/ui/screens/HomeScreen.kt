@@ -68,29 +68,6 @@ fun HomeScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             state = listState,
         ) {
-            // ── DYNAMIC ISLAND ───────────────────────
-            // 有消息时显示灵动岛胶囊，点击展开全屏决策
-            if (islandItems.isNotEmpty()) {
-                item {
-                    com.galaxy.wear.ui.components.DynamicIsland(
-                        items = islandItems,
-                        phaseText = when (phase) {
-                            Phase.SILENT -> "Galaxy"
-                            Phase.LIMINAL -> "认知中..."
-                            Phase.MANIFEST -> "执行中..."
-                        },
-                        onVoiceReply = onVoice,
-                        // Dismissing (tap outside / "关闭") only closes the expanded
-                        // overlay by default - without this, the same item would
-                        // still be in app.islandItems and pop right back up next
-                        // time the capsule is tapped. Actually drop the currently-
-                        // shown item (DynamicIsland always shows items.firstOrNull()).
-                        onCollapse = { islandItems.firstOrNull()?.let { app.dismissIslandItem(it.id) } },
-                        modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
-                    )
-                }
-            }
-
             // ── GALAXY Title ─────────────────────────
             item {
                 Text(
@@ -192,6 +169,34 @@ fun HomeScreen(
         isAmbient = isAmbient,
         modifier = Modifier.fillMaxSize()
     )
+
+    // ── DYNAMIC ISLAND(全屏 overlay,置于最上层)──
+    // 真 bug 修复:之前把 DynamicIsland 放在 ScalingLazyColumn 的 item{} 里。
+    // Lazy 列表沿滚动轴用无限高度约束测量 item,而灵动岛点开(EXPANDED)后内部渲染
+    // DecisionScreen —— 又是一个纵向 ScalingLazyColumn,纵向可滚动组件在无限高度
+    // 约束下测量会直接抛 IllegalStateException("Vertically scrollable component was
+    // measured with an infinity maximum height constraints...")→ 点一下胶囊必崩。
+    // DynamicIsland 根 Box 本来就是 fillMaxSize + 胶囊 TopCenter 的 overlay 设计,
+    // 挪到 Scaffold 外作全屏兄弟节点:胶囊悬浮在表盘顶部,展开态获得有界约束、
+    // 真正全屏,且未命中胶囊的触摸仍透传给下层列表(Box 本身不消费手势)。
+    if (islandItems.isNotEmpty()) {
+        com.galaxy.wear.ui.components.DynamicIsland(
+            items = islandItems,
+            phaseText = when (phase) {
+                Phase.SILENT -> "Galaxy"
+                Phase.LIMINAL -> "认知中..."
+                Phase.MANIFEST -> "执行中..."
+            },
+            onVoiceReply = onVoice,
+            // Dismissing (tap outside / "关闭") only closes the expanded
+            // overlay by default - without this, the same item would
+            // still be in app.islandItems and pop right back up next
+            // time the capsule is tapped. Actually drop the currently-
+            // shown item (DynamicIsland always shows items.firstOrNull()).
+            onCollapse = { islandItems.firstOrNull()?.let { app.dismissIslandItem(it.id) } },
+            modifier = Modifier.fillMaxSize()
+        )
+    }
 }
 
 @Composable
