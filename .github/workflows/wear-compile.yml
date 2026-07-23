@@ -21,6 +21,8 @@ permissions:
 jobs:
   compile:
     runs-on: ubuntu-latest
+    # 与兄弟仓 android-ci 同教训:不设 timeout 的 job 挂起时会占住 runner 数小时。
+    timeout-minutes: 25
     steps:
       - name: Checkout galaxy-wearos
         uses: actions/checkout@v4
@@ -52,9 +54,20 @@ jobs:
             ~/.gradle/wrapper
           key: gradle-${{ runner.os }}-${{ hashFiles('galaxy-wearos/**/*.gradle*', 'galaxy-wearos/gradle/wrapper/gradle-wrapper.properties') }}
 
-      - name: Build debug + compile unit tests (:app)
+      - name: Build debug + run unit tests (:app)
         working-directory: galaxy-wearos
         # 从"只编 main Kotlin"扩到"整包 assembleDebug + 编译单测源集",把资源/清单/打包/
         # 测试代码这些窄门看不见的错误也一并拦下(所有者要求:完整排错、全部跑通、修到零错)。
         # 不加 --stacktrace:Kotlin 的 e: file 编译错照常打印,不被上百行 Gradle 栈淹没。
-        run: ./gradlew :app:assembleDebug :app:compileDebugUnitTestKotlin --no-daemon
+        #
+        # 升级:testDebugUnitTest 取代 compileDebugUnitTestKotlin——兄弟仓 android 的教训:
+        # "测试只编译、从不运行"的门放过了上百处真实失败(含多个真生产 bug)。
+        # 测试必须真跑,红了就修,不留只编不跑的假绿。
+        run: ./gradlew :app:assembleDebug :app:testDebugUnitTest --no-daemon
+
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wear-unit-test-results
+          path: galaxy-wearos/app/build/reports/tests/
