@@ -145,8 +145,12 @@ private fun generateQrBitmap(
         val lightArgb = lightColor.toArgb()
         val paint = Paint().apply { isAntiAlias = false }
 
-        // 计算每个模块的大小(两端都显式 .toFloat() → Float.div(Float) 单一重载,
-        // 避免 K2 对 Float.div(Int) 的类型推断歧义级联到后面的 + / -)。
+        // 真 bug 修复:width/height 本来就取自 bitMatrix.width/height,所以
+        // moduleWidth == moduleHeight == 1.0f(ZXing encode(sizePx) 已把模块放大并
+        // 内含静区,矩阵一格 = 1 像素)。之前每个模块再向内缩 0.5px,得到
+        // left+0.5 == right-0.5+1-1 → 左右相等的零面积矩形,Canvas.drawRect 对空矩形
+        // 一个像素都不画 —— 二维码渲染成整片空白白块,扫码登录完全不可用。
+        // 修复:按整格绘制(1px/格),不再做"留间隙"缩缩(静区 ZXing 已保证)。
         val moduleWidth: Float = width.toFloat() / bitMatrix.width.toFloat()
         val moduleHeight: Float = height.toFloat() / bitMatrix.height.toFloat()
 
@@ -162,12 +166,9 @@ private fun generateQrBitmap(
                     // 类型推断歧义(否则报 minus/plus overload ambiguity)。
                     val left: Float = x * moduleWidth
                     val top: Float = y * moduleHeight
-                    // 稍微缩小模块以留出间隙,提高扫描成功率
-                    val rectLeft: Float = left + 0.5f
-                    val rectTop: Float = top + 0.5f
-                    val rectRight: Float = left + moduleWidth - 0.5f
-                    val rectBottom: Float = top + moduleHeight - 0.5f
-                    canvas.drawRect(rectLeft, rectTop, rectRight, rectBottom, paint)
+                    val right: Float = left + moduleWidth
+                    val bottom: Float = top + moduleHeight
+                    canvas.drawRect(left, top, right, bottom, paint)
                 }
             }
         }

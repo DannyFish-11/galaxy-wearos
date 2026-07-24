@@ -98,7 +98,10 @@ fun SettingsScreen(
     val urlLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        val entered = RemoteInput.getResultsFromIntent(result.data)
+        // 真 bug 修复:取消/划掉系统输入界面时 result.data 为 null,而
+        // RemoteInput.getResultsFromIntent 内部直接 intent.getClipData() → NPE 崩溃。
+        // 先判空再解析(Compose 层无法 JVM 单测,依赖 android.app.RemoteInput)。
+        val entered = result.data?.let { RemoteInput.getResultsFromIntent(it) }
             ?.getCharSequence("wear_server_url")?.toString()?.trim()
         if (!entered.isNullOrEmpty()) {
             serverUrl = entered
@@ -108,7 +111,8 @@ fun SettingsScreen(
     val tokenLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        val entered = RemoteInput.getResultsFromIntent(result.data)
+        // 真 bug 修复:同上,null Intent 防 NPE。
+        val entered = result.data?.let { RemoteInput.getResultsFromIntent(it) }
             ?.getCharSequence("wear_auth_token")?.toString()?.trim()
         if (!entered.isNullOrEmpty()) {
             token = entered
