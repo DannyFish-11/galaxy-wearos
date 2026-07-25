@@ -220,14 +220,34 @@ class BleGatewayClient(
                 if (status != BluetoothGatt.GATT_SUCCESS) return
                 val svc = gatt.getService(AIP_SERVICE_UUID) ?: return
                 val tx = svc.getCharacteristic(TX_UUID)
+                // ROUND-4-FIX(积压消息永远发不出去): BLE GATT 同一时刻只允许一个
+                // 未完成操作。旧代码在发起 CCCD writeDescriptor 后立即同步调用
+                // flushPending —— 描述符写尚未回调完成,首个 writeCharacteristic
+                // 必返回 false,消息被塞回队列并 break;而 flushPending 此后再无
+                // 任何触发点,离线积压从此滞留到下次(同样失败的)连接。改为:
+                // 发起了描述符写就等 onDescriptorWrite 回调后再冲队列;后续消息
+                // 由 onCharacteristicWrite 完成回调逐条接力(一次只写一条)。
+                var cccdWritePending = false
                 tx?.let {
                     gatt.setCharacteristicNotification(it, true)
                     it.getDescriptor(CCCD_UUID)?.let { d ->
                         d.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                        gatt.writeDescriptor(d)
+                        cccdWritePending = gatt.writeDescriptor(d)
                     }
                 }
-                flushPending(gatt)
+                if (!cccdWritePending) flushPending(gatt)
+            }
+
+            // ROUND-4-FIX: CCCD 写完成后 GATT 操作槽空闲,此时才能安全冲队列。
+            override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+                if (descriptor.uuid == CCCD_UUID) flushPending(gatt)
+            }
+
+            // ROUND-4-FIX: 上一条写完成后接力发送下一条积压消息(串行化写操作)。
+            override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+                if (status == BluetoothGatt.GATT_SUCCESS && pendingMessages.isNotEmpty()) {
+                    flushPending(gatt)
+                }
             }
 
             // FIX #7: Use non-deprecated onCharacteristicChanged for Android 13+ (API 33)
@@ -271,18 +291,23 @@ class BleGatewayClient(
         reconnectCount.set(0)
 
         // FIX #5: Disconnect first, then close after a short delay to ensure proper cleanup
+        // ROUND-4-FIX(延迟关闭误杀新连接): 旧的 postDelayed 闭包在 100ms 后读的
+        // 是 gatt 字段 —— 若期间用户又调用了 connect() 并赋了新的 GATT 客户端,
+        // 延迟任务会把【新连接】close 掉并把字段置 null,表现为"重连后 100ms 内
+        // 莫名断开"。改为在发起 disconnect 时就捕获旧实例、立即断开字段引用,
+        // 延迟关闭只作用于被捕获的旧实例,与后续 connect() 完全无关。
+        val staleGatt = gatt
+        gatt = null
         try {
-            gatt?.disconnect()
+            staleGatt?.disconnect()
             handler.postDelayed({
                 try {
-                    gatt?.close()
+                    staleGatt?.close()
                 } catch (e: Exception) { Log.w(TAG, "gatt.close failed: ${e.message}") }
-                gatt = null
             }, 100)
         } catch (e: Exception) {
             Log.w(TAG, "disconnect failed: ${e.message}")
-            try { gatt?.close() } catch (e2: Exception) { Log.w(TAG, "gatt.close fallback failed: ${e2.message}") }
-            gatt = null
+            try { staleGatt?.close() } catch (e2: Exception) { Log.w(TAG, "gatt.close fallback failed: ${e2.message}") }
         }
     }
 
@@ -311,17 +336,18 @@ class BleGatewayClient(
     }
 
     private fun flushPending(gatt: BluetoothGatt) {
+        // ROUND-4-FIX: 一次只写一条 —— BLE GATT 不允许并发未完成写操作,旧的
+        // while 连写循环里第二次 writeCharacteristic 必失败(上一条尚未回调),
+        // 消息回队后没有任何重试触发点。现在由 onCharacteristicWrite 完成回调
+        // 逐条接力,天然与 GATT 的"单飞行操作"模型对齐。
         val svc = gatt.getService(AIP_SERVICE_UUID) ?: return
         val rx = svc.getCharacteristic(RX_UUID) ?: return
-        while (pendingMessages.isNotEmpty()) {
-            val msg = pendingMessages.poll() ?: break
-            rx.value = msg.toByteArray()
-            // FIX #8: Check writeCharacteristic return value; re-queue if queue is full
-            if (!gatt.writeCharacteristic(rx)) {
-                Log.w(TAG, "writeCharacteristic returned false (queue full), re-queueing message")
-                pendingMessages.offer(msg)
-                break
-            }
+        val msg = pendingMessages.poll() ?: return
+        rx.value = msg.toByteArray()
+        // FIX #8: Check writeCharacteristic return value; re-queue if queue is full
+        if (!gatt.writeCharacteristic(rx)) {
+            Log.w(TAG, "writeCharacteristic returned false (stack busy), re-queueing message")
+            pendingMessages.offer(msg)
         }
     }
 }

@@ -208,6 +208,10 @@ class DeviceFlowManager(private val context: Context) {
     // ---- 状态监听 ----
 
     private var stateListener: FlowStateListener? = null
+    // ROUND-4-FIX(取消标志跨线程可见性): cancelFlow() 在主线程写,pollForToken
+    // 的 while 循环在 IO 协程线程读 —— 无 @Volatile 时 JMM 不保证写入对轮询线程
+    // 可见,用户点了"取消"后轮询仍可能一直跑到 30 分钟超时(期间持续打点后端)。
+    @Volatile
     private var isCancelled = false
 
     fun setStateListener(listener: FlowStateListener?) {

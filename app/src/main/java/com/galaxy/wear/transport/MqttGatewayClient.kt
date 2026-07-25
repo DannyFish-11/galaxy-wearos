@@ -44,6 +44,29 @@ class MqttGatewayClient(
         try {
             val clientId = deviceId.ifEmpty { "galaxy_wear_${UUID.randomUUID().toString().take(8)}" }
             val builder = MqttClient.builder()
+                // ROUND-4-FIX(断链后 connected 永久为 true): 此前 connected 只在
+                // connect 成功回调置 true、主动 disconnect() 回调置 false —— broker
+                // 掉线/网络切换这类被动断链没有任何监听,isConnected() 恒真,
+                // sendJson() 既不进离线队列也不报错,向已断开的客户端 publish 后
+                // 仍返回 true,消息静默丢失。挂上 HiveMQ 的连接生命周期监听,
+                // 让 connected 如实反映链路状态,离线消息才会落入 pendingMessages
+                // 并在重连回调 flushPending 时补发。
+                .addConnectedListener { _ ->
+                    Log.i(TAG, "MQTT link up")
+                    connected = true
+                    // 链路恢复后补发离线期间积压的消息(cleanSession(false) 下
+                    // broker 侧订阅仍在,无需重订阅)。
+                    client?.let { c -> flushPending(c) }
+                }
+                .addDisconnectedListener { ctx ->
+                    Log.w(TAG, "MQTT link down: ${ctx.cause.message}")
+                    connected = false
+                }
+                // ROUND-4-FIX(被动断链后无重连): 本类没有任何外部重连触发点,
+                // broker 掉线后传输永久失效、pendingMessages 永远滞留。启用
+                // HiveMQ 内建自动重连(指数退避 1s→2min,自带上限,不会形成
+                // 重连风暴),恢复后由上面的 ConnectedListener 补发积压。
+                .automaticReconnectWithDefaultConfig()
                 .useMqttVersion3()
                 .identifier(clientId)
                 .serverHost(brokerHost)
