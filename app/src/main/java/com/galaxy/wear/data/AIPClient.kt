@@ -278,6 +278,18 @@ class AIPClient(
                 try {
                     for (frame in incoming) {
                         if (isDisposed) break
+                        // ROUND-4-FIX(跨仓契约错读): 心跳活性不能只认 "pong"。
+                        // 本端心跳发的是 AIP JSON {"type":"ping"},而 V2 网关把
+                        // PING 委派给 android_bridge 后按"graceful no-op"处理
+                        // (android_bridge: "ACK/PING need no handler"),整个网关
+                        // 从不下发 "pong";"heartbeat_ack" 也只回给 heartbeat/
+                        // agent_ping 类型。于是 lastPongTimeMs 自 startHeartbeat()
+                        // 起从不更新,interval+timeout(默认 30s)后 pong-timeout
+                        // 分支必然误判"链路已死"——关闭健康会话并重连,循环往复,
+                        // 形成每 ~30s 一次的重连风暴。任何入站帧都证明链路活着,
+                        // 故在此按"收到即活"更新;真正的死链(无任何帧到达)仍会
+                        // 被 pong-timeout 正确捕获。
+                        lastPongTimeMs.set(System.currentTimeMillis())
                         when (frame) {
                             is Frame.Text -> {
                                 // P2-FIX: Enforce maximum message size for text frames too

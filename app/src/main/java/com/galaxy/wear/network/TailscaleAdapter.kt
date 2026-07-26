@@ -31,6 +31,22 @@ class TailscaleAdapter(private val context: Context) {
         /** Tailscale IP range prefix: 100.64.0.0/10 */
         const val TAILSCALE_PREFIX = "100."
 
+        /**
+         * ROUND-4-FIX(网段判断与契约不符): 注释/常量声明的是 Tailscale 的
+         * 100.64.0.0/10,但旧实现 startsWith("100.") 实际匹配整个 100.0.0.0/8 ——
+         * 其中 100.0.x–100.63.x 与 100.128.x–100.255.x 是可路由的公网段
+         * (例如 AWS 的 100.2x.x.x)。手表经蜂窝/代理拿到公网 100.x 地址时会
+         * 误判"已在 Tailscale 网络",随后向 9 个候选 IP(此时是公网地址)的
+         * 9000 端口发 HTTP /health 探测——既泄露探测流量又白等 ~3s。
+         * 按 /10 语义收紧:第二段必须落在 [64, 127]。
+         */
+        fun isTailscaleIp(host: String): Boolean {
+            if (!host.startsWith(TAILSCALE_PREFIX)) return false
+            val second = host.removePrefix(TAILSCALE_PREFIX).substringBefore('.').toIntOrNull()
+                ?: return false
+            return second in 64..127
+        }
+
         /** Default Galaxy gateway port */
         const val DEFAULT_PORT = 9000
 
@@ -75,7 +91,8 @@ class TailscaleAdapter(private val context: Context) {
                 if (!iface.isUp || iface.isLoopback) continue
                 for (addr in iface.inetAddresses.asSequence()) {
                     val host = addr.hostAddress ?: continue
-                    if (host.startsWith(TAILSCALE_PREFIX)) {
+                    // ROUND-4-FIX: 用严格的 100.64.0.0/10 判断,见 isTailscaleIp。
+                    if (isTailscaleIp(host)) {
                         result += host
                         Log.i(TAG, "Tailscale IP detected: $host on ${iface.name}")
                     }

@@ -83,6 +83,11 @@ class TokenSyncManager(
     /** 是否有正在进行的请求 */
     private val isRequesting = AtomicBoolean(false)
     /** 等待响应的 Continuation */
+    // ROUND-4-FIX(跨线程可见性导致回包丢失): 该字段在 IO 协程线程写入
+    // (suspendCancellableCoroutine 内),而 receiveTokenFromPhone/handleBleMessage
+    // 从 BLE Binder 回调线程读取 —— 无 @Volatile 时回调线程可能读到过期的 null,
+    // 手机明明回了令牌却无人恢复挂起点,请求"莫名"等满 30s 超时。
+    @Volatile
     private var pendingContinuation: CancellableContinuation<DeviceToken?>? = null
     /** 自动刷新任务 */
     private var autoRefreshJob: Job? = null
