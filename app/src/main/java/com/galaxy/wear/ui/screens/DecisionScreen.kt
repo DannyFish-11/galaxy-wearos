@@ -99,7 +99,7 @@ fun DecisionScreen(
                 DecisionOptionChip(
                     option = option,
                     onSelected = {
-                        triggerHaptic(context, HapticType.MESSAGE_ARRIVAL)
+                        triggerHaptic(context, HapticType.UI_TAP)
                         onOptionSelected(option.id)
                     }
                 )
@@ -109,7 +109,7 @@ fun DecisionScreen(
                 Spacer(modifier = Modifier.height(4.dp))
                 Chip(
                     onClick = {
-                        triggerHaptic(context, HapticType.MESSAGE_ARRIVAL)
+                        triggerHaptic(context, HapticType.UI_TAP)
                         onVoiceReply()
                     },
                     label = {

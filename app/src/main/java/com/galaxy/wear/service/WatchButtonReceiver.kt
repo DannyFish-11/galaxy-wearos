@@ -3,11 +3,11 @@ package com.galaxy.wear.service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.VibrationEffect
-import android.os.Vibrator
 import android.util.Log
 import android.view.KeyEvent
 import com.galaxy.wear.VoiceActivity
+import com.galaxy.wear.ui.HapticType
+import com.galaxy.wear.ui.triggerHaptic
 
 /**
  * WatchButtonReceiver — 侧键硬键唤醒语音
@@ -75,7 +75,7 @@ class WatchButtonReceiver : BroadcastReceiver() {
             if (!longPressFired) {
                 longPressFired = true
                 Log.i(TAG, "[BUTTON] Long press detected — launching voice")
-                triggerHaptic(context)
+                triggerHaptic(context, HapticType.LISTENING_START)
                 launchVoice(context)
             }
             return
@@ -87,7 +87,7 @@ class WatchButtonReceiver : BroadcastReceiver() {
                 tapCount++
                 if (tapCount >= 2) {
                     Log.i(TAG, "[BUTTON] Double tap detected — launching voice")
-                    triggerHaptic(context)
+                    triggerHaptic(context, HapticType.LISTENING_START)
                     launchVoice(context)
                     tapCount = 0
                 }
@@ -113,8 +113,4 @@ class WatchButtonReceiver : BroadcastReceiver() {
         context.startActivity(intent)
     }
 
-    private fun triggerHaptic(context: Context) {
-        val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-        vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK))
-    }
 }

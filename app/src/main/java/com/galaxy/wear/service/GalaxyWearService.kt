@@ -22,6 +22,8 @@ import com.galaxy.wear.receiver.ReplyReceiver
 import com.galaxy.wear.sensing.InterruptibilityMonitor
 import com.galaxy.wear.sensing.InterruptibilityReport
 import com.galaxy.wear.sensing.InterruptibilityUplinkPolicy
+import com.galaxy.wear.ui.HapticType
+import com.galaxy.wear.ui.HapticVocabulary
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -167,6 +169,13 @@ class GalaxyWearService : LifecycleService() {
             ).apply {
                 description = "OpenClawd 需要人工决策时的提醒"
                 enableVibration(true)
+                // 让全表最重要的那一类真的用上词汇表里的"等距三拍"。
+                // Android O+ 上振动由**渠道**决定,Builder 上的 setVibrate 会被忽略 ——
+                // 不接这一行的话,决策提醒用的是系统默认振动,与"消息到达"手感一样,
+                // 用户不看屏幕就分不出"有条消息"和"等你拿主意"。
+                vibrationPattern = HapticVocabulary
+                    .patternFor(HapticType.DECISION_PROMPT)
+                    .toWaveformTimings()
             }
             nm.createNotificationChannel(decisionChannel)
         }
@@ -425,7 +434,8 @@ class GalaxyWearService : LifecycleService() {
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .setVibrate(longArrayOf(0, 300, 100, 300))
+            // 同一份词汇表,不再写一串与渠道对不上的魔数。
+            .setVibrate(HapticVocabulary.patternFor(HapticType.DECISION_PROMPT).toWaveformTimings())
             .setAutoCancel(true)
             .extend(wearableExtender)
 
