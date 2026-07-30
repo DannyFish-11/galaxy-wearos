@@ -5,6 +5,8 @@ import android.os.PowerManager
 import android.util.Log
 import com.galaxy.wear.BuildConfig
 import com.galaxy.wear.GalaxyWearApplication
+import com.galaxy.wear.sensing.InterruptibilityReport
+import com.galaxy.wear.sensing.toWirePayload
 import com.ufo.galaxy.shared.protocol.ReconnectionConfig
 import com.ufo.galaxy.shared.protocol.AuthMessage
 import com.ufo.galaxy.shared.protocol.MsgType
@@ -504,6 +506,20 @@ class AIPClient(
             put("phase", phase)
             put("device", "wear_os")
         })
+    }
+
+    /**
+     * 上报可打扰性 —— 手表回答"现在能不能打扰他",而**不**交出身体数据。
+     *
+     * 载荷完全由 [toWirePayload] 生成,其键集合被
+     * `InterruptibilityWireContractTest` 钉死为 `INTERRUPTIBILITY_WIRE_KEYS`。
+     * 心率/加速度/静息基线这些原始信号只在手表本地参与运算,不经过这条路。
+     */
+    suspend fun sendInterruptibility(
+        report: InterruptibilityReport,
+        timestampMs: Long = System.currentTimeMillis(),
+    ) {
+        sendCommand("interruptibility", report.toWirePayload(timestampMs = timestampMs))
     }
 
     /**

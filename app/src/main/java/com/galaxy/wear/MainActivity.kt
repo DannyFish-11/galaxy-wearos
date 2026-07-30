@@ -64,25 +64,46 @@ class MainActivity : ComponentActivity() {
     // declaring it in the manifest alone is not enough. Without the grant, the
     // HITL decision notifications (and the foreground-service status
     // notification) are silently suppressed by the system.
-    private val notificationPermissionLauncher = registerForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (!granted) {
-            android.util.Log.w("MainActivity", "POST_NOTIFICATIONS denied — decision/status notifications will be hidden")
+    //
+    // 改成 RequestMultiplePermissions:可打扰性传感新增了 BODY_SENSORS,而
+    // 单权限 launcher 连着 launch 两次时,第二次会在第一个对话框还挂着的时候
+    // 被系统丢掉 —— 那样 BODY_SENSORS 永远问不出来。一次问完不存在这个竞态。
+    private val permissionLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        results.forEach { (permission, granted) ->
+            if (granted) return@forEach
+            when (permission) {
+                android.Manifest.permission.POST_NOTIFICATIONS ->
+                    android.util.Log.w("MainActivity", "POST_NOTIFICATIONS denied — decision/status notifications will be hidden")
+                android.Manifest.permission.BODY_SENSORS ->
+                    // 如实标注:拒绝不会让功能瘫掉,只是心率那一路退出加权、
+                    // 可打扰性判断的 confidence 变低。
+                    android.util.Log.w("MainActivity", "BODY_SENSORS denied — 可打扰性判断将只用运动/亮屏证据,置信度降低")
+                else ->
+                    android.util.Log.w("MainActivity", "权限被拒: $permission")
+            }
         }
+    }
+
+    /** 首次启动时一次性把缺的运行时权限问全。 */
+    private fun requestMissingPermissions() {
+        val wanted = buildList {
+            if (android.os.Build.VERSION.SDK_INT >= 33) add(android.Manifest.permission.POST_NOTIFICATIONS)
+            add(android.Manifest.permission.BODY_SENSORS)
+        }
+        val missing = wanted.filter {
+            checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) permissionLauncher.launch(missing.toTypedArray())
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
 
-        // ROUND-2-FIX: ask for the notification runtime permission on first launch (API 33+).
-        if (android.os.Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
-                android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
-            notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-        }
+        // ROUND-2-FIX + 可打扰性传感:首次启动一次性请求通知与心率权限。
+        requestMissingPermissions()
 
         // W3-FIX: Register lifecycle observer for leak prevention
         lifecycle.addObserver(lifecycleObserver)

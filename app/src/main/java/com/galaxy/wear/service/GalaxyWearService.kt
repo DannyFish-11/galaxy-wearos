@@ -19,9 +19,14 @@ import com.galaxy.wear.GalaxyWearApplication
 import com.galaxy.wear.MainActivity
 import com.galaxy.wear.domain.model.Phase
 import com.galaxy.wear.receiver.ReplyReceiver
+import com.galaxy.wear.sensing.InterruptibilityMonitor
+import com.galaxy.wear.sensing.InterruptibilityReport
+import com.galaxy.wear.sensing.InterruptibilityUplinkPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -51,12 +56,21 @@ class GalaxyWearService : LifecycleService() {
         const val EXTRA_DECISION_SUMMARY = "decision_summary"
         const val EXTRA_DECISION_OPTIONS = "decision_options"
         const val TAG = "GalaxyWearService"
+
+        /** 个人静息心率基线的本地存放键。**只存在本机加密偏好里,不上传。** */
+        const val PREF_HR_BASELINE = "interruptibility_hr_baseline"
+
+        /** 可打扰性上行的检查周期(真发不发由 InterruptibilityUplinkPolicy 决定)。 */
+        const val UPLINK_TICK_MS = 15_000L
     }
 
     private val binder = LocalBinder()
     @Volatile
     private var isRunning = false
     private var phaseObserverJob: Job? = null
+    private var interruptibilityMonitor: InterruptibilityMonitor? = null
+    private var interruptibilityJob: Job? = null
+    private val uplinkPolicy = InterruptibilityUplinkPolicy()
 
     inner class LocalBinder : Binder() {
         fun getService(): GalaxyWearService = this@GalaxyWearService
@@ -112,6 +126,7 @@ class GalaxyWearService : LifecycleService() {
             if (!isRunning) {
                 isRunning = true
                 observePhaseChanges()
+                observeInterruptibility()
             }
         }
 
@@ -120,6 +135,7 @@ class GalaxyWearService : LifecycleService() {
 
     private fun stopGracefully() {
         isRunning = false
+        stopInterruptibility()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
@@ -258,6 +274,90 @@ class GalaxyWearService : LifecycleService() {
                 Log.e(TAG, "Phase observer crashed: ${e.message}")
             }
         }
+    }
+
+    // ── 可打扰性:手表回答"现在能不能打扰他" ──────────────────────────
+
+    /**
+     * 起传感 + 上行。
+     *
+     * 隐私边界(所有者拍板):心率/加速度/静息基线**只在手表本地**参与运算,
+     * 上行的只有一个标量报告。基线也只落到本机加密偏好,不进任何同步通道。
+     *
+     * 不做的事:这里**不**替上游做决定。手表只报"能不能打扰",要不要因此
+     * 闭嘴是 V2 侧常驻注意力循环的事(有界延迟,不是丢弃)。
+     */
+    private fun observeInterruptibility() {
+        val app = application as GalaxyWearApplication
+
+        interruptibilityJob?.cancel()
+        interruptibilityMonitor?.stop()
+        uplinkPolicy.reset()
+
+        val monitor = InterruptibilityMonitor(
+            context = applicationContext,
+            scope = lifecycleScope,
+            baselineStore = object : InterruptibilityMonitor.BaselineStore {
+                override fun load(): String =
+                    app.encryptedPrefs.getString(PREF_HR_BASELINE, "") ?: ""
+
+                override fun save(encoded: String) {
+                    app.encryptedPrefs.edit().putString(PREF_HR_BASELINE, encoded).apply()
+                }
+            },
+        )
+        interruptibilityMonitor = monitor
+        monitor.start()
+
+        // 刻意**轮询** StateFlow 的当前值,而不是 collect 它。
+        // StateFlow 会做等值合并:状态长期不变时(比如权限没给、一直是 UNKNOWN),
+        // collect 只会触发一次,于是节流策略里的 10 分钟心跳**永远不会被求值** ——
+        // 上游那边就是一条无限期陈旧的数据,恰好是心跳本来要防的事。
+        // 轮询周期比监视器自身的采样周期短,响应延迟不会成为瓶颈。
+        interruptibilityJob = lifecycleScope.launch {
+            try {
+                while (isActive) {
+                    if (isRunning) uplinkOnce(app, monitor.report.value)
+                    delay(UPLINK_TICK_MS)
+                }
+            } catch (e: CancellationException) {
+                Log.d(TAG, "可打扰性观察者已取消")
+            } catch (e: Exception) {
+                Log.e(TAG, "可打扰性观察者崩溃: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * UNKNOWN 也要上报:上游必须能区分"手表在,但没有传感证据"与"根本没有手表"。
+     * 节流策略会把它压到最多每心跳一条。
+     */
+    private suspend fun uplinkOnce(app: GalaxyWearApplication, report: InterruptibilityReport) {
+        val now = System.currentTimeMillis()
+        if (!uplinkPolicy.shouldSend(report, now)) return
+        if (!app.isAipClientReady()) return
+        try {
+            app.aipClient.sendInterruptibility(report, now)
+            // 只有真发出去了才记账,失败时下一拍会重试。
+            uplinkPolicy.recordSent(report, now)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "可打扰性上报失败(下一拍重试): ${e.message}")
+        }
+    }
+
+    private fun stopInterruptibility() {
+        interruptibilityJob?.cancel()
+        interruptibilityJob = null
+        // 必须显式 stop():否则传感器监听与亮屏广播会一直挂着耗电。
+        interruptibilityMonitor?.stop()
+        interruptibilityMonitor = null
+    }
+
+    override fun onDestroy() {
+        stopInterruptibility()
+        super.onDestroy()
     }
 
     private fun updateNotification(text: String) {
