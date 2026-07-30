@@ -15,17 +15,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
 import com.galaxy.wear.ui.triggerHaptic
+import com.galaxy.wear.domain.model.DecisionOption
 import com.galaxy.wear.ui.HapticType
-
-/**
- * DecisionOption — 决策选项数据类
- */
-data class DecisionOption(
-    val id: String,
-    val label: String,
-    val icon: Int = android.R.drawable.ic_menu_help,
-    val isDestructive: Boolean = false,
-)
 
 /**
  * DecisionScreen — OpenClawd 决策卡片
@@ -188,7 +179,11 @@ private fun DecisionOptionChip(
         },
         icon = {
             Icon(
-                painter = painterResource(option.icon),
+                // 领域模型不带 android.R 默认值(那样它就不再是领域模型了),
+                // 兜底图标由界面层自己挑。
+                painter = painterResource(
+                    if (option.iconRes != 0) option.iconRes else android.R.drawable.ic_menu_help
+                ),
                 contentDescription = null,
                 modifier = Modifier.size(20.dp),
                 tint = if (option.isDestructive) Color.White else MaterialTheme.colors.primary

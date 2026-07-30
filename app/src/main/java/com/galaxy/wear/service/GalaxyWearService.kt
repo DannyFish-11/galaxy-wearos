@@ -18,6 +18,7 @@ import androidx.lifecycle.lifecycleScope
 import com.galaxy.wear.GalaxyWearApplication
 import com.galaxy.wear.MainActivity
 import com.galaxy.wear.domain.model.Phase
+import com.galaxy.wear.domain.pairOptionLabels
 import com.galaxy.wear.receiver.ReplyReceiver
 import com.galaxy.wear.sensing.InterruptibilityMonitor
 import com.galaxy.wear.sensing.InterruptibilityReport
@@ -57,6 +58,9 @@ class GalaxyWearService : LifecycleService() {
         const val EXTRA_DECISION_TITLE = "decision_title"
         const val EXTRA_DECISION_SUMMARY = "decision_summary"
         const val EXTRA_DECISION_OPTIONS = "decision_options"
+        /** 与 EXTRA_DECISION_OPTIONS 一一对应的**显示文字**。
+         *  只传 id 的话,手腕上的按钮印的是 `approve`/`deny` 这种协议字面量。 */
+        const val EXTRA_DECISION_LABELS = "decision_labels"
         const val TAG = "GalaxyWearService"
 
         /** 个人静息心率基线的本地存放键。**只存在本机加密偏好里,不上传。** */
@@ -120,6 +124,7 @@ class GalaxyWearService : LifecycleService() {
                     summary = intent.getStringExtra(EXTRA_DECISION_SUMMARY) ?: "",
                     decisionId = decisionId,
                     options = intent.getStringArrayListExtra(EXTRA_DECISION_OPTIONS) ?: emptyList(),
+                    labels = intent.getStringArrayListExtra(EXTRA_DECISION_LABELS) ?: emptyList(),
                 )
             }
         }
@@ -389,6 +394,7 @@ class GalaxyWearService : LifecycleService() {
         summary: String,
         decisionId: String,
         options: List<String>,
+        labels: List<String> = emptyList(),
     ) {
         val context = this
 
@@ -404,18 +410,21 @@ class GalaxyWearService : LifecycleService() {
         val wearableExtender = NotificationCompat.WearableExtender()
             .setHintShowBackgroundOnly(false)
 
-        options.forEach { optionLabel ->
+        // 按钮**显示** label、**回传** id。此前两者都用 id,于是手腕上印的是
+        // `approve`/`deny` 这种协议字面量 —— 一个瞟一眼就要按下去的界面,
+        // 却要求用户先认识协议。
+        pairOptionLabels(options, labels).forEach { option ->
             val optionIntent = Intent(context, ReplyReceiver::class.java).apply {
                 action = ReplyReceiver.ACTION_REPLY
                 putExtra(ReplyReceiver.EXTRA_DECISION_ID, decisionId)
-                putExtra(ReplyReceiver.EXTRA_OPTION_ID, optionLabel)
+                putExtra(ReplyReceiver.EXTRA_OPTION_ID, option.id)
             }
             val optionPending = PendingIntent.getBroadcast(
-                context, (decisionId + optionLabel).hashCode(), optionIntent,
+                context, (decisionId + option.id).hashCode(), optionIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             wearableExtender.addAction(NotificationCompat.Action(
-                android.R.drawable.ic_menu_send, optionLabel, optionPending
+                android.R.drawable.ic_menu_send, option.label, optionPending
             ))
         }
 
