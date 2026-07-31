@@ -45,7 +45,7 @@ data class IslandItem(
     val source: String = "OpenClawd",  // "OpenClawd" | "微信" | "系统"
     val priority: String = "normal",   // "low" | "normal" | "high"
     val timestamp: Long = System.currentTimeMillis(),
-    val options: List<com.galaxy.wear.ui.screens.DecisionOption> = emptyList(),
+    val options: List<com.galaxy.wear.domain.model.DecisionOption> = emptyList(),
     val onOptionSelected: ((String) -> Unit)? = null,
 )
 

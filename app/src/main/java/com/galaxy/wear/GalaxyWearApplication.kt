@@ -432,6 +432,11 @@ class GalaxyWearApplication : Application() {
                 putExtra(GalaxyWearService.EXTRA_DECISION_TITLE, title)
                 putExtra(GalaxyWearService.EXTRA_DECISION_SUMMARY, summary)
                 putStringArrayListExtra(GalaxyWearService.EXTRA_DECISION_OPTIONS, ArrayList(optionIds))
+                // 显示文字必须一并送过去 —— 只送 id 的话通知按钮印的是协议字面量。
+                putStringArrayListExtra(
+                    GalaxyWearService.EXTRA_DECISION_LABELS,
+                    ArrayList(decisionOptions.map { it.label }),
+                )
             }
             androidx.core.content.ContextCompat.startForegroundService(this, intent)
 

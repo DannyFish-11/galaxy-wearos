@@ -1,8 +1,5 @@
 package com.galaxy.wear.ui.screens
 
-import android.content.Context
-import android.os.VibrationEffect
-import android.os.Vibrator
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
@@ -23,6 +20,7 @@ import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.platform.LocalContext
+import com.galaxy.wear.ui.triggerHaptic
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
@@ -325,8 +323,3 @@ fun PhaseHaloRing(
     }
 }
 
-// ── Haptic helper ────────────────────────────────────
-private fun triggerHaptic(context: Context) {
-    val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-    vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
-}

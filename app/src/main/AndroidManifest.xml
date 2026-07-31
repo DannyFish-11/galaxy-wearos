@@ -41,9 +41,19 @@
     <!-- H3: Auto-restart on boot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- W7-FIX: Removed unused sensor permissions (BODY_SENSORS, ACTIVITY_RECOGNITION,
-         HIGH_SAMPLING_RATE_SENSORS) to avoid confusing users at install time.
-         Re-add when health sensor features are actually implemented. -->
+    <!-- 可打扰性传感(com.galaxy.wear.sensing):手表本地判断"现在能不能打扰他"。
+         W7-FIX 当初把三个传感权限一起删掉,理由是"功能没实现、别在安装时吓用户"。
+         现在心率这一路真的用上了(InterruptibilityMonitor 采 Sensor.TYPE_HEART_RATE),
+         所以**只**加回 BODY_SENSORS 这一个:
+           - 加速度计不需要权限;
+           - 抬腕靠亮屏代理(Wear OS 抬腕亮屏),不需要权限;
+           - 勿扰状态是只读查询,不需要权限;
+           - ACTIVITY_RECOGNITION 只有计步/活动识别才需要,本实现没用 —— 不加回,
+             免得重蹈"声明了却没人用"的覆辙。
+         BODY_SENSORS_BACKGROUND 同样不加:采集只发生在常驻前台服务(dataSync)里,
+         按系统定义属于前台访问。
+         没授权也不会瘫:心率那一路自动退出加权,confidence 相应下降。 -->
+    <uses-permission android:name="android.permission.BODY_SENSORS" />
 
     <!-- Wear OS hardware -->
     <uses-feature android:name="android.hardware.type.watch" />

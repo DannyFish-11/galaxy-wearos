@@ -1,7 +1,5 @@
 package com.galaxy.wear.ui.screens
 
-import android.os.VibrationEffect
-import android.os.Vibrator
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
