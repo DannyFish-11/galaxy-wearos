@@ -167,6 +167,32 @@ fun SettingsScreen(
                 )
             }
 
+            // 凭据存储降级告警。
+            //
+            // EncryptedSharedPreferences 初始化失败时会退回明文 SharedPreferences,
+            // auth_token 就是裸存的。此前这件事只有 logcat 里一行 Log.e —— 用户
+            // 完全无从知道自己的令牌没有被加密。既然选择了"降级而不是崩溃"
+            // (少数机型不支持 AndroidKeyStore),那降级本身就必须是可见的。
+            if (app.isCredentialStorageDegraded()) {
+                item {
+                    Text(
+                        text = "⚠ 凭据未加密存储",
+                        style = MaterialTheme.typography.caption1,
+                        color = Color(0xFFFFB4A9),
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+                }
+                item {
+                    Text(
+                        text = "本机不支持加密存储，登录令牌以明文保存。" +
+                            "请勿在共用或已 root 的设备上登录。",
+                        style = MaterialTheme.typography.caption3,
+                        color = Color(0xFF9A9A9A),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                    )
+                }
+            }
+
             // Connection status indicator
             item {
                 val (statusColor, statusText) = when (connectionState) {
