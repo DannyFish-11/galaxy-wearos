@@ -116,6 +116,24 @@ class GalaxyWearApplication : Application() {
     private val mdnsDiscovery by lazy { MdnsDiscovery(this) }
     private val tailscaleAdapter by lazy { TailscaleAdapter(this) }
 
+    /**
+     * 凭据存储是否已降级为明文（[encryptedPrefs] 初始化失败）。
+     *
+     * 由 [encryptedPrefs] 的 lazy 初始化置位。**必须声明在 [encryptedPrefs] 之前** ——
+     * 否则一旦将来有人在两者之间加一个会触碰 [encryptedPrefs] 的属性初始化器，
+     * 这里的 `= false` 会在 lazy 块置位之后才执行，把降级标记悄悄抹掉。
+     *
+     * 外部请用 [isCredentialStorageDegraded] 读取，它保证 lazy 初始化已发生。
+     */
+    @Volatile
+    var credentialStorageDegraded: Boolean = false
+        private set
+
+    /** 降级原因（异常消息），未降级时为 null。 */
+    @Volatile
+    var credentialStorageDegradedReason: String? = null
+        private set
+
     // SECURITY-FIX: EncryptedSharedPreferences for secure credential storage.
     // Replaces plaintext SharedPreferences to protect auth_token from device-local attackers.
     val encryptedPrefs by lazy {
@@ -131,10 +149,32 @@ class GalaxyWearApplication : Application() {
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
         } catch (e: Exception) {
-            Log.e(TAG, "EncryptedSharedPreferences init failed, falling back to plaintext: ${e.message}")
-            // Fallback to plaintext only on devices that don't support encrypted prefs (very rare)
+            // 降级到明文存储。此前这里只有一行 Log.e —— auth_token 会**静默**落进
+            // 明文 SharedPreferences，用户看不见、V2 也无从知道这台设备的凭据
+            // 实际上是裸存的。一次 logcat 里的 ERROR 不构成"用户知情"。
+            //
+            // 现在把这次降级记成进程级可查询的状态（credentialStorageDegraded），
+            // 供 UI 与上行链路读取，让"这台表的 token 没有加密"成为一个
+            // 可被看见、可被上报的事实，而不是一行没人看的日志。
+            //
+            // 仍然选择降级而不是直接崩：极少数机型确实不支持 AndroidKeyStore，
+            // 崩掉等于这些设备完全不可用。取舍是"可用但被明确标记为降级"。
+            Log.e(TAG, "EncryptedSharedPreferences init failed, falling back to plaintext: ${e.message}", e)
+            credentialStorageDegraded = true
+            credentialStorageDegradedReason = e.message ?: e::class.java.simpleName
             getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
         }
+    }
+
+    /**
+     * 返回凭据存储是否处于明文降级状态。
+     *
+     * 会先触碰 [encryptedPrefs] 以确保 lazy 初始化已执行 —— 否则在任何人用过
+     * 凭据存储之前调用本方法，永远返回 false，等于这个信号不存在。
+     */
+    fun isCredentialStorageDegraded(): Boolean {
+        encryptedPrefs  // 触发 lazy 初始化
+        return credentialStorageDegraded
     }
 
     override fun onCreate() {
