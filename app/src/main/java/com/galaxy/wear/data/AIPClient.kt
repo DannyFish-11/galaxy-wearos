@@ -1140,70 +1140,8 @@ enum class AIPConnectionState {
         get() = this == DISCONNECTED || this == ERROR
 }
 
-/**
- * X-DATA-CR1: Unified AIP v3 message envelope compatible with Android's AipMessage.
- *
- * Changed from sealed interface (6 subtypes) to data class with MsgType enum
- * to match Android's message format. All metadata fields are now explicit
- * (correlationId, protocol, version, timestamp, deviceId, traceId, sessionId)
- * so that Wear OS messages can be parsed correctly by Android/Gateway.
- *
- * @param type           Message type identifier (MsgType enum).
- * @param payload        Typed payload as JsonElement (default JsonNull).
- * @param correlationId  Request/response correlation identifier.
- * @param protocol       Wire-protocol identifier; always "AIP/1.0" for AIP v3.
- * @param version        Protocol version; always "3.0".
- * @param timestamp      Unix epoch millis auto-set at construction.
- * @param deviceId       Device identifier for origin tracking.
- * @param traceId        End-to-end trace identifier propagated across all hops.
- * @param sessionId      Optional session identifier.
- */
-@Serializable
-data class AIPMessage(
-    val type: MsgType,
-    val payload: JsonElement = JsonNull,
-    // X-DATA-CR1: Field names use @SerialName with snake_case to match Android's AipMessage wire format
-    @SerialName("correlation_id") val correlationId: String = "",
-    val protocol: String = "AIP/1.0",
-    val version: String = "3.0",
-    val timestamp: Long = System.currentTimeMillis(),
-    @SerialName("device_id") val deviceId: String = "",
-    @SerialName("trace_id") val traceId: String = "",
-    @SerialName("session_id") val sessionId: String = "",
-    // X-OBS-CR1: Observability fields required for cross-repo message compatibility
-    @SerialName("route_mode") val routeMode: String = "",
-    @SerialName("runtime_session_id") val runtimeSessionId: String = "",
-    @SerialName("idempotency_key") val idempotencyKey: String = "",
-    @SerialName("source_runtime_posture") val sourceRuntimePosture: String = "",
-    @SerialName("dispatch_trace_id") val dispatchTraceId: String = "",
-    @SerialName("session_correlation_id") val sessionCorrelationId: String = ""
-) {
-    /**
-     * Convenience accessor for payload as JsonObject.
-     * Returns empty JsonObject if payload is not a JsonObject.
-     */
-    val payloadObject: JsonObject
-        get() = payload as? JsonObject ?: JsonObject(emptyMap())
-
-    /**
-     * X-API-CR1: Backward-compatible payload field accessors for migration
-     * from the old sealed interface pattern.
-     */
-    val token: String
-        get() = (payload as? JsonObject)?.get("token")?.jsonPrimitive?.content ?: ""
-
-    val id: Int
-        get() = (payload as? JsonObject)?.get("id")?.jsonPrimitive?.int ?: 0
-
-    val command: String
-        get() = (payload as? JsonObject)?.get("command")?.jsonPrimitive?.content ?: ""
-
-    val success: Boolean
-        get() = (payload as? JsonObject)?.get("success")?.jsonPrimitive?.boolean ?: false
-
-    val event: String
-        get() = (payload as? JsonObject)?.get("event")?.jsonPrimitive?.content ?: ""
-
-    val msgType: String
-        get() = (payload as? JsonObject)?.get("msg_type")?.jsonPrimitive?.content ?: ""
-}
+// X-DATA-CR1 → PR-SHARED-ENVELOPE: 本地信封已删除。canonical 信封是
+// shared-protocol 的 com.ufo.galaxy.shared.protocol.AipMessage(Android 与 Wear
+// 的单一线格式真相源,payloadObject/token/command 等访问器齐备)。typealias 让
+// 既有 13 处构造与 serializer() 调用零改动。
+typealias AIPMessage = com.ufo.galaxy.shared.protocol.AipMessage
