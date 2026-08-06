@@ -4,11 +4,8 @@ package com.galaxy.wear.network
  * Wear 侧网关传输抽象 —— 与 Android 仓 `com.ufo.galaxy.network.GatewayClient`
  * 同一契约(跨仓对齐,勿单边加方法)。
  *
- * 修复背景:AIPClient 声明实现 `com.galaxy.wear.network.GatewayClient`,
- * Ble/MqttGatewayClient 却 import Android 仓包名
- * `com.ufo.galaxy.network.GatewayClient` —— 而两个包里这个接口在本仓都
- * 不存在,三个实现类全部编译不过。本文件补上唯一的本仓定义,传输实现
- * (WS / BLE / MQTT)统一实现它。
+ * 唯一的本仓定义。当前唯一的实现是 WS(AIPClient) —— BLE 与 MQTT 两个实现
+ * 已随 G 一并删除:它们零调用方,而"多一种传输"这件事的价值全在有人用它。
  */
 interface GatewayClient {
 

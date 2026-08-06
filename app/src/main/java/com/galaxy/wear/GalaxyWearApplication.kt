@@ -554,12 +554,12 @@ class GalaxyWearApplication : Application() {
     }
 
     /**
-     * STAGE-2b: 设备流(RFC 8628)登录成功后的统一桥接入口。
+     * 接入成功后的统一桥接入口。
      *
-     * 此前断裂:DeviceFlowManager 把访问令牌写进 galaxy_auth/access_token,而 connect()
-     * 走的是 galaxy_config/auth_token —— 两套存储不同文件、不同键,从不相交,于是"登录成功"
-     * 也永远连不上。这里作为唯一桥接点,把令牌与服务器地址落到 connect 路径真正读取的
-     * galaxy_config,再立即连接。自动重连回调(onAvailable)之后也能凭这份凭据复连。
+     * 为什么要有这么一个桥:配对客户端把令牌写进 galaxy_auth,而 connect() 读的是
+     * galaxy_config/auth_token —— 两套存储不同文件、不同键。历史上这两处从不相交,
+     * 于是"登录成功"也永远连不上。这里是唯一桥接点:把令牌与服务器地址落到 connect
+     * 真正读取的那份,再立即连接;自动重连(onAvailable)之后也能凭它复连。
      */
     fun loginWithToken(serverUrl: String, token: String) {
         if (serverUrl.isBlank() || token.isBlank()) {
