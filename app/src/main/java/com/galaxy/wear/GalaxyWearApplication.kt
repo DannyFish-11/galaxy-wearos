@@ -10,6 +10,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.galaxy.wear.service.GalaxyWearService
 import com.ufo.galaxy.shared.protocol.DeviceIdProvider
+import com.galaxy.wear.auth.PairClaimClient
 import com.galaxy.wear.data.AIPClient
 import com.galaxy.wear.data.AIPConnectionState
 import com.galaxy.wear.data.AIPMessage
@@ -133,6 +134,59 @@ class GalaxyWearApplication : Application() {
     // P2-FIX: Auto-reconnect attempt counter to prevent infinite reconnect loops.
     private var reconnectAttempts = 0
 
+    /** 配对客户端 —— 令牌与候选路径都存在它那儿。 */
+    private val pairClaimClient by lazy { PairClaimClient(this) }
+
+    /** 下一次重连该用第几条候选。连上之后由 [rememberWorkingPath] 归位。 */
+    private var candidateCursor = 0
+
+    /** 最近一次实际拨出去的地址 —— 连上之后用它反查"这次是哪条路通的"。 */
+    private var lastAttemptedUrl: String? = null
+
+    /**
+     * 这一轮重连该连哪个地址。
+     *
+     * 为什么不能只认一个地址
+     * ======================
+     * 手表在家、在公司、带流量出门，能连通的是**不同**的那一条。只认存下来的
+     * 那一个等于换个网就连不上，而表上只显示"连不上"——没有任何线索说该换哪条路，
+     * 用户能做的只有反复重启。
+     *
+     * 顺序由 [com.ufo.galaxy.shared.protocol.ConnectionPathPlanner] 决定（与手机端
+     * 同一个类），上次通的那条排最前；每次重连往后挪一格，走完一轮回到开头
+     * （环境随时可能变回去，比如到家连上 WiFi）。
+     *
+     * 没配过对、或网关没给候选（老版本）→ 退回 [fallback] 那个单地址。
+     */
+    private fun nextConnectUrl(fallback: String): String {
+        val stored = pairClaimClient.storedCandidates()
+        if (stored.isEmpty()) return fallback
+        val ordered = com.ufo.galaxy.shared.protocol.ConnectionPathPlanner.planAttempts(
+            stored.map {
+                com.ufo.galaxy.shared.protocol.ConnectionPathPlanner.Candidate(it.kind, it.url, it.priority)
+            },
+            pairClaimClient.lastGoodKind(),
+        )
+        if (ordered.isEmpty()) return fallback
+        val pick = ordered[candidateCursor % ordered.size]
+        candidateCursor = (candidateCursor + 1) % ordered.size
+        Log.i(TAG, "Reconnect will try candidate kind=${pick.kind}")
+        return pick.url
+    }
+
+    /**
+     * 记下这次是哪条路通的 —— 下次先试它，省掉一整轮试探。
+     *
+     * 在外面走流量时，局域网那条每次都要白等一个超时才轮到能用的；不记的话
+     * 每次断线都要重付这个代价。认不出来（老网关没给候选）就不记，
+     * 而不是留一个猜的值。
+     */
+    private fun rememberWorkingPath(url: String) {
+        val kind = pairClaimClient.storedCandidates().firstOrNull { it.url == url }?.kind ?: return
+        pairClaimClient.rememberGoodKind(kind)
+        candidateCursor = 0
+    }
+
     // WARNING-9: Reusable discovery components to avoid creating new instances on every call.
     private val mdnsDiscovery by lazy { MdnsDiscovery(this) }
     private val tailscaleAdapter by lazy { TailscaleAdapter(this) }
@@ -241,6 +295,7 @@ class GalaxyWearApplication : Application() {
                             Log.i(TAG, "Connection established — resetting reconnect attempts (was $reconnectAttempts)")
                             reconnectAttempts = 0
                         }
+                        lastAttemptedUrl?.let { rememberWorkingPath(it) }
                     }
                     // 连接态**不再**判定 LIMINAL/MANIFEST —— 那是桌面的属性。
                     // 规则本身在 PhaseAuthority 里（可单测），这里只负责应用它。
@@ -290,9 +345,14 @@ class GalaxyWearApplication : Application() {
                                 val savedUrl = encryptedPrefs.getString(KEY_SERVER_URL, "") ?: ""
                                 val savedToken = encryptedPrefs.getString(KEY_AUTH_TOKEN, "") ?: ""
                                 if (savedUrl.isNotEmpty() && savedToken.isNotEmpty() && isAipClientReady()) {
+                                    // 每次重连换一条候选，而不是在同一条上重试到死 ——
+                                    // 后者正是"出门就连不上"的形状：局域网那条在外面
+                                    // 永远超时，重试多少次都一样。
+                                    val target = nextConnectUrl(savedUrl)
+                                    lastAttemptedUrl = target
                                     // 此处位于 appScope.launch 内,裸 this 指向 CoroutineScope;
                                     // getOrCreateDeviceId 需要 Context,故显式限定为 Application。
-                                    aipClient.connect(savedUrl, savedToken, DeviceIdProvider.getOrCreateDeviceId(this@GalaxyWearApplication))
+                                    aipClient.connect(target, savedToken, DeviceIdProvider.getOrCreateDeviceId(this@GalaxyWearApplication))
                                 }
                             } catch (e: CancellationException) {
                                 Log.d(TAG, "Auto-reconnect cancelled")
