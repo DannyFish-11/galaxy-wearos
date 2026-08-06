@@ -17,6 +17,7 @@ import com.ufo.galaxy.shared.protocol.MsgType
 import com.galaxy.wear.domain.DeviceRepository
 import com.galaxy.wear.domain.model.Device
 import com.galaxy.wear.domain.model.Phase
+import com.galaxy.wear.domain.model.PhaseAuthority
 import com.galaxy.wear.network.MdnsDiscovery
 import com.galaxy.wear.network.TailscaleAdapter
 import com.ufo.galaxy.transport.AipTransportManager
@@ -59,6 +60,26 @@ class GalaxyWearApplication : Application() {
         private const val MAX_RECONNECT_ATTEMPTS = 20
     }
 
+    /**
+     * 中心智能体的三态。**只有桌面说了算** —— 见 [applyPhaseChange]。
+     *
+     * 为什么这里不许由连接态来写
+     * ==========================
+     * 这个字段原来有两个写入方：一个是本机连接态（CONNECTED→LIMINAL、
+     * AUTHENTICATED→MANIFEST），一个是桌面下发的相位。谁后写谁赢，于是鉴权一成功
+     * 手表就常驻「显现」，而桌面那边其实什么也没发生（silent）。用户看到的是
+     * 一台正在忙的机器，实际它在发呆。
+     *
+     * 根子上这是两件事被塞进了同一个字段：
+     * - **三态**说的是"那台电脑上的主体在干什么"——它是远端的属性；
+     * - **连接态**说的是"我这块表连上没有"——它是本机链路的属性。
+     *
+     * 手机端一直是分开的（PhaseStateMachine 由远端驱动，连接态另有 connected
+     * 布尔）。手表这边归位到同一口径：连接态请读 [connectionState]。
+     *
+     * 链路断掉时回落 SILENT 是唯一的例外，而且不是"本机判定了相位"——
+     * 是**我们不再知道**了，而"不知道"绝不能继续渲染成「显现」。
+     */
     private val _phase = MutableStateFlow(Phase.SILENT)
     val phase: StateFlow<Phase> = _phase.asStateFlow()
 
@@ -221,24 +242,14 @@ class GalaxyWearApplication : Application() {
                             reconnectAttempts = 0
                         }
                     }
-                    val newPhase = when (state) {
-                        AIPConnectionState.CONNECTED -> Phase.LIMINAL
-                        AIPConnectionState.AUTHENTICATED -> Phase.MANIFEST
-                        else -> {
-                            // Only fall back to SILENT if we were previously active
-                            if (_phase.value == Phase.MANIFEST || _phase.value == Phase.LIMINAL) {
-                                Log.i(TAG, "AIP disconnected — falling back to SILENT")
-                                Phase.SILENT
-                            } else {
-                                _phase.value // Keep current
-                            }
-                        }
-                    }
+                    // 连接态**不再**判定 LIMINAL/MANIFEST —— 那是桌面的属性。
+                    // 规则本身在 PhaseAuthority 里（可单测），这里只负责应用它。
+                    val linkUp = state == AIPConnectionState.CONNECTED ||
+                        state == AIPConnectionState.AUTHENTICATED
+                    val newPhase = PhaseAuthority.onLinkChange(_phase.value, linkUp)
                     if (newPhase != _phase.value) {
+                        Log.i(TAG, "AIP link down — phase reverts to SILENT (desktop state unknown)")
                         _phase.value = newPhase
-                        // CRITICAL-3: Redacted logging — avoid printing raw state objects that may
-                        // contain sensitive connection details. Log phase name only.
-                        Log.i(TAG, "Phase transition: $newPhase")
                         // W16-FIX: Refresh tile widget on phase change for up-to-date display
                         GalaxyTileService.requestRefresh(this@GalaxyWearApplication)
                     }
@@ -346,6 +357,17 @@ class GalaxyWearApplication : Application() {
         // FIX: Wrap entire handler in try-catch to prevent Flow collection from terminating
         try {
             // X-DATA-CR1: Extract liquid event fields from payload JsonObject
+            //
+            // 手表读 payload.to_phase，手机读报文**顶层**的 event_category/event_action
+            // —— 两个消费方读的位置本来就不同，因为规范信封 AipMessage 里根本没有那两个
+            // 顶层字段（ignoreUnknownKeys 会把它们直接丢掉），而手机端是拿 Gson 解原始
+            // JSON 根，所以读得到。
+            //
+            // 这个不对称曾经要了命：V2 侧三个相位发送点各手写一份报文，其中"设备刚注册完
+            // 推当前相位"那份不带 payload，于是刚配好对的手表在下一行 `?: return` 处静默
+            // 丢弃，而桌面日志写着"已推送"。V2 侧现已收敛为一处构造
+            // （core/cross_device_sync.build_phase_state_event，顶层与 payload 一次填齐），
+            // 并有 AST 检查盯住"不许再手写第四份"。手表这边因此可以安心只读 payload。
             val payload = event.payload as? kotlinx.serialization.json.JsonObject
                 ?: return
             val content = payload["content"]?.jsonObject
@@ -435,11 +457,7 @@ class GalaxyWearApplication : Application() {
     // MANIFEST ring + haptic + halo pulse.
     private fun applyPhaseChange(toPhase: String) {
         val oldPhase = _phase.value
-        _phase.value = when (toPhase.lowercase()) {
-            "manifest" -> Phase.MANIFEST
-            "liminal" -> Phase.LIMINAL
-            else -> Phase.SILENT
-        }
+        _phase.value = PhaseAuthority.fromDesktop(toPhase)
         if (oldPhase != _phase.value) {
             triggerHaptic(this, HapticType.PHASE_CHANGE)
             _pulseTrigger.value += 1 // trigger halo pulse
