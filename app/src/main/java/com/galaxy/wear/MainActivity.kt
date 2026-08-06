@@ -21,14 +21,15 @@ import androidx.wear.compose.material.*
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
-import com.galaxy.wear.auth.DeviceFlowManager
+import com.galaxy.wear.auth.PairClaimClient
 import com.galaxy.wear.domain.model.Phase
-import com.galaxy.wear.ui.screens.DeviceAuthScreen
+import com.galaxy.wear.ui.screens.PairClaimScreen
 import com.galaxy.wear.ui.screens.DevicesScreen
 import com.galaxy.wear.ui.screens.HomeScreen
 import com.galaxy.wear.ui.screens.SettingsScreen
 import com.galaxy.wear.ui.screens.VoiceScreen
 import com.galaxy.wear.ui.theme.GalaxyWearTheme
+import com.ufo.galaxy.shared.protocol.DeviceIdProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -132,13 +133,13 @@ class MainActivity : ComponentActivity() {
             GalaxyWearTheme {
                 val navController = rememberSwipeDismissableNavController()
                 val app = application as GalaxyWearApplication
-                // STAGE-2b: 单实例 DeviceFlowManager,供 "auth" 路由的设备流登录使用。
-                val deviceFlowManager = remember { DeviceFlowManager(app) }
+                // 单实例 PairClaimClient，供 "auth" 路由的短码接入使用。
+                val pairClaimClient = remember { PairClaimClient(app) }
                 // FIX: close the manager's Ktor HttpClient when the Activity
                 // composition is destroyed — previously it leaked for the
                 // process lifetime once the auth screen was opened.
-                DisposableEffect(deviceFlowManager) {
-                    onDispose { deviceFlowManager.dispose() }
+                DisposableEffect(pairClaimClient) {
+                    onDispose { pairClaimClient.dispose() }
                 }
                 val phase by app.phase.collectAsState()
                 val islandItems by app.islandItems.collectAsState()
@@ -184,24 +185,30 @@ class MainActivity : ComponentActivity() {
                                 onLogin = { navController.navigate("auth") }
                             )
                         }
-                        // STAGE-2b: 设备流(RFC 8628)登录界面 —— 此前 DeviceAuthScreen 写好却
-                        // 没有任何导航入口(孤儿)。这里接进导航;成功后把令牌桥接进 connect 路径。
+                        // 设备接入界面。三仓统一到 /api/v1/pair/claim 之后，这里不再是
+                        // OAuth device flow —— 桌面出示短码，手表输进去，一次 HTTP 换回
+                        // 属于本表的令牌。不再需要"另一块屏幕"才能完成接入。
                         composable("auth") {
                             val serverUrl = app.encryptedPrefs.getString("server_url", "") ?: ""
-                            DeviceAuthScreen(
-                                deviceFlowManager = deviceFlowManager,
+                            PairClaimScreen(
+                                pairClaimClient = pairClaimClient,
                                 serverUrl = serverUrl,
-                                onAuthSuccess = {
-                                    // 设备流令牌已存入 galaxy_auth;经 loginWithToken 落到
-                                    // connect 路径读取的 galaxy_config 并立即连接。
-                                    deviceFlowManager.getToken()?.let {
-                                        app.loginWithToken(serverUrl, it.accessToken)
+                                // 必须是连 WS 时自报的那个 id —— 令牌签给它，
+                                // 设备入口再拿令牌 subject 与它对一次。不一致就是
+                                // "已配对却连不上"。
+                                deviceId = DeviceIdProvider.getOrCreateDeviceId(app),
+                                deviceName = android.os.Build.MODEL,
+                                onPaired = {
+                                    // 令牌已由 PairClaimClient 落进 galaxy_auth；
+                                    // 经 loginWithToken 桥到 connect 路径读取的那份配置并连上。
+                                    pairClaimClient.storedToken()?.let {
+                                        app.loginWithToken(serverUrl, it)
                                     }
                                     navController.navigate("home") {
                                         popUpTo("home") { inclusive = true }
                                     }
                                 },
-                                onAuthCancelled = { navController.popBackStack() }
+                                onCancelled = { navController.popBackStack() }
                             )
                         }
                     }

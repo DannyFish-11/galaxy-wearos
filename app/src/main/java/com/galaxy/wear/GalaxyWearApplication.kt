@@ -10,6 +10,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.galaxy.wear.service.GalaxyWearService
 import com.ufo.galaxy.shared.protocol.DeviceIdProvider
+import com.galaxy.wear.auth.PairClaimClient
 import com.galaxy.wear.data.AIPClient
 import com.galaxy.wear.data.AIPConnectionState
 import com.galaxy.wear.data.AIPMessage
@@ -17,6 +18,7 @@ import com.ufo.galaxy.shared.protocol.MsgType
 import com.galaxy.wear.domain.DeviceRepository
 import com.galaxy.wear.domain.model.Device
 import com.galaxy.wear.domain.model.Phase
+import com.galaxy.wear.domain.model.PhaseAuthority
 import com.galaxy.wear.network.MdnsDiscovery
 import com.galaxy.wear.network.TailscaleAdapter
 import com.ufo.galaxy.transport.AipTransportManager
@@ -59,6 +61,26 @@ class GalaxyWearApplication : Application() {
         private const val MAX_RECONNECT_ATTEMPTS = 20
     }
 
+    /**
+     * 中心智能体的三态。**只有桌面说了算** —— 见 [applyPhaseChange]。
+     *
+     * 为什么这里不许由连接态来写
+     * ==========================
+     * 这个字段原来有两个写入方：一个是本机连接态（CONNECTED→LIMINAL、
+     * AUTHENTICATED→MANIFEST），一个是桌面下发的相位。谁后写谁赢，于是鉴权一成功
+     * 手表就常驻「显现」，而桌面那边其实什么也没发生（silent）。用户看到的是
+     * 一台正在忙的机器，实际它在发呆。
+     *
+     * 根子上这是两件事被塞进了同一个字段：
+     * - **三态**说的是"那台电脑上的主体在干什么"——它是远端的属性；
+     * - **连接态**说的是"我这块表连上没有"——它是本机链路的属性。
+     *
+     * 手机端一直是分开的（PhaseStateMachine 由远端驱动，连接态另有 connected
+     * 布尔）。手表这边归位到同一口径：连接态请读 [connectionState]。
+     *
+     * 链路断掉时回落 SILENT 是唯一的例外，而且不是"本机判定了相位"——
+     * 是**我们不再知道**了，而"不知道"绝不能继续渲染成「显现」。
+     */
     private val _phase = MutableStateFlow(Phase.SILENT)
     val phase: StateFlow<Phase> = _phase.asStateFlow()
 
@@ -111,6 +133,59 @@ class GalaxyWearApplication : Application() {
 
     // P2-FIX: Auto-reconnect attempt counter to prevent infinite reconnect loops.
     private var reconnectAttempts = 0
+
+    /** 配对客户端 —— 令牌与候选路径都存在它那儿。 */
+    private val pairClaimClient by lazy { PairClaimClient(this) }
+
+    /** 下一次重连该用第几条候选。连上之后由 [rememberWorkingPath] 归位。 */
+    private var candidateCursor = 0
+
+    /** 最近一次实际拨出去的地址 —— 连上之后用它反查"这次是哪条路通的"。 */
+    private var lastAttemptedUrl: String? = null
+
+    /**
+     * 这一轮重连该连哪个地址。
+     *
+     * 为什么不能只认一个地址
+     * ======================
+     * 手表在家、在公司、带流量出门，能连通的是**不同**的那一条。只认存下来的
+     * 那一个等于换个网就连不上，而表上只显示"连不上"——没有任何线索说该换哪条路，
+     * 用户能做的只有反复重启。
+     *
+     * 顺序由 [com.ufo.galaxy.shared.protocol.ConnectionPathPlanner] 决定（与手机端
+     * 同一个类），上次通的那条排最前；每次重连往后挪一格，走完一轮回到开头
+     * （环境随时可能变回去，比如到家连上 WiFi）。
+     *
+     * 没配过对、或网关没给候选（老版本）→ 退回 [fallback] 那个单地址。
+     */
+    private fun nextConnectUrl(fallback: String): String {
+        val stored = pairClaimClient.storedCandidates()
+        if (stored.isEmpty()) return fallback
+        val ordered = com.ufo.galaxy.shared.protocol.ConnectionPathPlanner.planAttempts(
+            stored.map {
+                com.ufo.galaxy.shared.protocol.ConnectionPathPlanner.Candidate(it.kind, it.url, it.priority)
+            },
+            pairClaimClient.lastGoodKind(),
+        )
+        if (ordered.isEmpty()) return fallback
+        val pick = ordered[candidateCursor % ordered.size]
+        candidateCursor = (candidateCursor + 1) % ordered.size
+        Log.i(TAG, "Reconnect will try candidate kind=${pick.kind}")
+        return pick.url
+    }
+
+    /**
+     * 记下这次是哪条路通的 —— 下次先试它，省掉一整轮试探。
+     *
+     * 在外面走流量时，局域网那条每次都要白等一个超时才轮到能用的；不记的话
+     * 每次断线都要重付这个代价。认不出来（老网关没给候选）就不记，
+     * 而不是留一个猜的值。
+     */
+    private fun rememberWorkingPath(url: String) {
+        val kind = pairClaimClient.storedCandidates().firstOrNull { it.url == url }?.kind ?: return
+        pairClaimClient.rememberGoodKind(kind)
+        candidateCursor = 0
+    }
 
     // WARNING-9: Reusable discovery components to avoid creating new instances on every call.
     private val mdnsDiscovery by lazy { MdnsDiscovery(this) }
@@ -220,25 +295,16 @@ class GalaxyWearApplication : Application() {
                             Log.i(TAG, "Connection established — resetting reconnect attempts (was $reconnectAttempts)")
                             reconnectAttempts = 0
                         }
+                        lastAttemptedUrl?.let { rememberWorkingPath(it) }
                     }
-                    val newPhase = when (state) {
-                        AIPConnectionState.CONNECTED -> Phase.LIMINAL
-                        AIPConnectionState.AUTHENTICATED -> Phase.MANIFEST
-                        else -> {
-                            // Only fall back to SILENT if we were previously active
-                            if (_phase.value == Phase.MANIFEST || _phase.value == Phase.LIMINAL) {
-                                Log.i(TAG, "AIP disconnected — falling back to SILENT")
-                                Phase.SILENT
-                            } else {
-                                _phase.value // Keep current
-                            }
-                        }
-                    }
+                    // 连接态**不再**判定 LIMINAL/MANIFEST —— 那是桌面的属性。
+                    // 规则本身在 PhaseAuthority 里（可单测），这里只负责应用它。
+                    val linkUp = state == AIPConnectionState.CONNECTED ||
+                        state == AIPConnectionState.AUTHENTICATED
+                    val newPhase = PhaseAuthority.onLinkChange(_phase.value, linkUp)
                     if (newPhase != _phase.value) {
+                        Log.i(TAG, "AIP link down — phase reverts to SILENT (desktop state unknown)")
                         _phase.value = newPhase
-                        // CRITICAL-3: Redacted logging — avoid printing raw state objects that may
-                        // contain sensitive connection details. Log phase name only.
-                        Log.i(TAG, "Phase transition: $newPhase")
                         // W16-FIX: Refresh tile widget on phase change for up-to-date display
                         GalaxyTileService.requestRefresh(this@GalaxyWearApplication)
                     }
@@ -279,9 +345,14 @@ class GalaxyWearApplication : Application() {
                                 val savedUrl = encryptedPrefs.getString(KEY_SERVER_URL, "") ?: ""
                                 val savedToken = encryptedPrefs.getString(KEY_AUTH_TOKEN, "") ?: ""
                                 if (savedUrl.isNotEmpty() && savedToken.isNotEmpty() && isAipClientReady()) {
+                                    // 每次重连换一条候选，而不是在同一条上重试到死 ——
+                                    // 后者正是"出门就连不上"的形状：局域网那条在外面
+                                    // 永远超时，重试多少次都一样。
+                                    val target = nextConnectUrl(savedUrl)
+                                    lastAttemptedUrl = target
                                     // 此处位于 appScope.launch 内,裸 this 指向 CoroutineScope;
                                     // getOrCreateDeviceId 需要 Context,故显式限定为 Application。
-                                    aipClient.connect(savedUrl, savedToken, DeviceIdProvider.getOrCreateDeviceId(this@GalaxyWearApplication))
+                                    aipClient.connect(target, savedToken, DeviceIdProvider.getOrCreateDeviceId(this@GalaxyWearApplication))
                                 }
                             } catch (e: CancellationException) {
                                 Log.d(TAG, "Auto-reconnect cancelled")
@@ -346,6 +417,17 @@ class GalaxyWearApplication : Application() {
         // FIX: Wrap entire handler in try-catch to prevent Flow collection from terminating
         try {
             // X-DATA-CR1: Extract liquid event fields from payload JsonObject
+            //
+            // 手表读 payload.to_phase，手机读报文**顶层**的 event_category/event_action
+            // —— 两个消费方读的位置本来就不同，因为规范信封 AipMessage 里根本没有那两个
+            // 顶层字段（ignoreUnknownKeys 会把它们直接丢掉），而手机端是拿 Gson 解原始
+            // JSON 根，所以读得到。
+            //
+            // 这个不对称曾经要了命：V2 侧三个相位发送点各手写一份报文，其中"设备刚注册完
+            // 推当前相位"那份不带 payload，于是刚配好对的手表在下一行 `?: return` 处静默
+            // 丢弃，而桌面日志写着"已推送"。V2 侧现已收敛为一处构造
+            // （core/cross_device_sync.build_phase_state_event，顶层与 payload 一次填齐），
+            // 并有 AST 检查盯住"不许再手写第四份"。手表这边因此可以安心只读 payload。
             val payload = event.payload as? kotlinx.serialization.json.JsonObject
                 ?: return
             val content = payload["content"]?.jsonObject
@@ -435,11 +517,7 @@ class GalaxyWearApplication : Application() {
     // MANIFEST ring + haptic + halo pulse.
     private fun applyPhaseChange(toPhase: String) {
         val oldPhase = _phase.value
-        _phase.value = when (toPhase.lowercase()) {
-            "manifest" -> Phase.MANIFEST
-            "liminal" -> Phase.LIMINAL
-            else -> Phase.SILENT
-        }
+        _phase.value = PhaseAuthority.fromDesktop(toPhase)
         if (oldPhase != _phase.value) {
             triggerHaptic(this, HapticType.PHASE_CHANGE)
             _pulseTrigger.value += 1 // trigger halo pulse
@@ -554,12 +632,12 @@ class GalaxyWearApplication : Application() {
     }
 
     /**
-     * STAGE-2b: 设备流(RFC 8628)登录成功后的统一桥接入口。
+     * 接入成功后的统一桥接入口。
      *
-     * 此前断裂:DeviceFlowManager 把访问令牌写进 galaxy_auth/access_token,而 connect()
-     * 走的是 galaxy_config/auth_token —— 两套存储不同文件、不同键,从不相交,于是"登录成功"
-     * 也永远连不上。这里作为唯一桥接点,把令牌与服务器地址落到 connect 路径真正读取的
-     * galaxy_config,再立即连接。自动重连回调(onAvailable)之后也能凭这份凭据复连。
+     * 为什么要有这么一个桥:配对客户端把令牌写进 galaxy_auth,而 connect() 读的是
+     * galaxy_config/auth_token —— 两套存储不同文件、不同键。历史上这两处从不相交,
+     * 于是"登录成功"也永远连不上。这里是唯一桥接点:把令牌与服务器地址落到 connect
+     * 真正读取的那份,再立即连接;自动重连(onAvailable)之后也能凭它复连。
      */
     fun loginWithToken(serverUrl: String, token: String) {
         if (serverUrl.isBlank() || token.isBlank()) {
