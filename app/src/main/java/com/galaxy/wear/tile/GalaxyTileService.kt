@@ -16,6 +16,7 @@ import androidx.wear.tiles.TileBuilders
 import androidx.wear.tiles.TileService
 import com.galaxy.wear.GalaxyWearApplication
 import com.galaxy.wear.domain.model.Phase
+import com.galaxy.wear.ui.theme.PhaseVisual
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 
@@ -77,12 +78,11 @@ class GalaxyTileService : TileService() {
     }
 
     private fun buildLayout(phase: Phase): LayoutElementBuilders.LayoutElement {
-        // 0xFFxxxxxx 在 Kotlin 里超出 Int 范围是 Long,必须 .toInt() 取得带符号 ARGB Int。
-        val (dotColor, label) = when (phase) {
-            Phase.SILENT -> 0xFF333333.toInt() to "静默"
-            Phase.LIMINAL -> 0xFF808080.toInt() to "临界"
-            Phase.MANIFEST -> 0xFFE0E0E0.toInt() to "显现"
-        }
+        // 颜色与标签都从 PhaseVisual 取 —— 这里曾经各写各的字面量,四项里漂了三项
+        // (LIMINAL #808080 vs #666666、MANIFEST #E0E0E0 vs #F5F5F7、底色纯黑 vs #0A0A0F)。
+        // Tile 和表盘应用在同一块表上同时可见,漂了就是肉眼可见的两个灰。
+        val dotColor = PhaseVisual.statusArgb(phase)
+        val label = PhaseVisual.label(phase)
 
         return LayoutElementBuilders.Box.Builder()
             .setWidth(expand())
@@ -91,7 +91,7 @@ class GalaxyTileService : TileService() {
                 ModifiersBuilders.Modifiers.Builder()
                     .setBackground(
                         ModifiersBuilders.Background.Builder()
-                            .setColor(argb(0xFF000000.toInt()))
+                            .setColor(argb(PhaseVisual.BACKGROUND_ARGB.toInt()))
                             .build()
                     )
                     .build()
@@ -143,7 +143,7 @@ class GalaxyTileService : TileService() {
                     .addContent(
                         Text.Builder(this, "GALAXY")
                             .setTypography(Typography.TYPOGRAPHY_CAPTION2)
-                            .setColor(argb(0xFF555555.toInt()))
+                            .setColor(argb(PhaseVisual.CAPTION_ARGB.toInt()))
                             .build()
                     )
                     .build()

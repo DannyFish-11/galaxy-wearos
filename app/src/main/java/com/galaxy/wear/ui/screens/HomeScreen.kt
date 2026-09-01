@@ -84,11 +84,10 @@ fun HomeScreen(
 
             // ── Phase status text ────────────────────
             item {
-                val (label, color) = when (phase) {
-                    Phase.SILENT -> Pair("静默", GraySilent)
-                    Phase.LIMINAL -> Pair("临界", GrayLiminal)
-                    Phase.MANIFEST -> Pair("显现", WhitePrimary)
-                }
+                // 标签与颜色都取自 PhaseVisual —— Tile 读的是同一份，
+                // 否则表盘和 Tile 并排时同一相位会是两个灰。
+                val label = PhaseVisual.label(phase)
+                val color = PhaseVisual.statusColor(phase)
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = label,
