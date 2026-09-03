@@ -45,11 +45,28 @@ class CrossRepoCiIsNotPinnedToMainTest {
     }
 
     @Test
-    fun `only pull requests look for a matching sibling branch`() {
-        // push（含 main）必须永远用 main：主干要对着主干验证。
+    fun `the default branch is always validated against the default branch`() {
+        // 需要守住的不变式只有一条：main 必须对着 main 验证。
+        // 边界刻意划在「是不是 main」而不是「是不是 PR」—— 本工作流 push 与 pull_request
+        // 都触发，且 push: branches: ["**"]；若 push 那一遍恒用 main，跨仓改动就永远有
+        // 一条注定红的运行，墙没拆掉只是挪了位置。这条正是被那样红了一轮才补上的。
         assertTrue(
-            "PR_BRANCH 不是只在 pull_request 事件下取 head_ref —— main 将不再对着 main 验证",
-            workflow().contains("github.event_name == 'pull_request' && github.head_ref"),
+            "没有『分支名等于 main 就不去找同名分支』这一条 —— main 可能被拿去对着别的 ref 验证",
+            workflow().contains("[ \"\$BRANCH\" != \"\$DEFAULT_REF\" ]"),
+        )
+    }
+
+    @Test
+    fun `branch name is taken correctly for both event kinds`() {
+        // PR 上必须取 head_ref：github.ref_name 在 PR 事件里是 "123/merge"，不是分支名。
+        val src = workflow()
+        assertTrue(
+            "PR 上没取 head_ref",
+            src.contains("github.event_name == 'pull_request' && github.head_ref"),
+        )
+        assertTrue(
+            "非 PR 事件没回落到 ref_name —— 推特性分支那一遍会恒用 main，必然红",
+            src.contains("github.ref_name"),
         )
     }
 

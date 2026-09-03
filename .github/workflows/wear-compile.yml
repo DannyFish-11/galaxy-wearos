@@ -33,8 +33,12 @@ jobs:
       # 在单个 PR 里变绿**：手表侧引用安卓分支上的新类必然 Unresolved reference，只能
       # 先合安卓、再回来重跑。相位色收敛与 mDNS 收敛两轮都撞过同一堵墙。
       #
-      # 改成：PR 上先找兄弟仓里【同名分支】，没有才回落 main；push（含 main）永远用 main。
-      # 后半句是这条的前提 —— 主干必须始终对着主干验证，否则"main 是绿的"不再成立。
+      # 改成：**默认分支对着默认分支验证，其它分支先找兄弟仓的同名分支**。
+      #
+      # 边界划在「是不是 main」，不是「是不是 PR」。本工作流 push 与 pull_request 都触发，
+      # 而 push: branches: ["**"] 意味着每次推特性分支也会跑一遍；若那一遍恒用 main，
+      # 跨仓改动就永远有一条注定红的运行 —— 墙没拆掉，只是挪了个位置。
+      # 需要守住的不变式只有一条：main 必须对着 main 验证，"main 是绿的"才成立。
       #
       # 安全边界：ls-remote 只在 **DannyFish-11/ufo-galaxy-android** 里找分支，而那个仓
       # 只有所有者能推。分叉 PR 起任意分支名也命中不了不存在的分支，拿不到额外代码。
@@ -43,18 +47,20 @@ jobs:
         env:
           SIBLING_REPO: DannyFish-11/ufo-galaxy-android
           CROSS_REPO_TOKEN: ${{ secrets.GALAXY_CROSS_REPO_TOKEN || github.token }}
-          PR_BRANCH: ${{ github.event_name == 'pull_request' && github.head_ref || '' }}
+          # PR 用 head_ref（github.ref_name 在 PR 上是 "123/merge"，不是分支名）；
+          # 其余事件用 ref_name。等于 DEFAULT_REF 时下面直接跳过查找。
+          BRANCH: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
         run: |
           set -euo pipefail
           DEFAULT_REF=main
           REF="$DEFAULT_REF"
-          if [ -n "$PR_BRANCH" ] && [ "$PR_BRANCH" != "$DEFAULT_REF" ]; then
+          if [ -n "$BRANCH" ] && [ "$BRANCH" != "$DEFAULT_REF" ]; then
             # 不回显 URL：里面带 token。ls-remote 失败(网络/权限)也按 main 处理，
             # 宁可回到旧行为，也不要因为探测本身把整条门弄红。
             if git ls-remote --exit-code --heads \
                  "https://x-access-token:${CROSS_REPO_TOKEN}@github.com/${SIBLING_REPO}.git" \
-                 "refs/heads/${PR_BRANCH}" >/dev/null 2>&1; then
-              REF="$PR_BRANCH"
+                 "refs/heads/${BRANCH}" >/dev/null 2>&1; then
+              REF="$BRANCH"
             fi
           fi
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
@@ -66,7 +72,7 @@ jobs:
               echo "### ⚠️ 本次构建用的是兄弟仓的分支，不是 \`main\`"
               echo
               echo "- 兄弟仓：\`${SIBLING_REPO}\`"
-              echo "- 使用的 ref：\`${REF}\`（PR 同名分支）"
+              echo "- 使用的 ref：\`${REF}\`（兄弟仓同名分支）"
               echo
               echo "**合并顺序有要求**：这条绿只证明「两个分支放在一起是好的」，"
               echo "不证明合进 \`main\` 之后也好。必须**先合兄弟仓的对应 PR**，再合本 PR；"
