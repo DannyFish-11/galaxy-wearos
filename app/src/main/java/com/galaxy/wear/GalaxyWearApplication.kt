@@ -19,8 +19,9 @@ import com.galaxy.wear.domain.DeviceRepository
 import com.galaxy.wear.domain.model.Device
 import com.galaxy.wear.domain.model.Phase
 import com.galaxy.wear.domain.model.PhaseAuthority
-import com.galaxy.wear.network.MdnsDiscovery
 import com.galaxy.wear.network.TailscaleAdapter
+import com.galaxy.wear.network.isWifiAvailable
+import com.ufo.galaxy.network.GatewayDiscovery
 import com.ufo.galaxy.transport.AipTransportManager
 import com.galaxy.wear.tile.GalaxyTileService
 import com.galaxy.wear.domain.parseDecisionOptions
@@ -51,6 +52,15 @@ class GalaxyWearApplication : Application() {
 
     companion object {
         const val TAG = "GalaxyWear"
+        /**
+         * 手表侧的 mDNS 发现窗口。
+         *
+         * 原先是 `MdnsDiscovery.DISCOVER_TIMEOUT_MS`，随那个类一起收敛到共享的
+         * `GatewayDiscovery` 之后，取值留在调用方 —— 因为它是**本端的取舍**而不是
+         * 发现协议的属性：手机默认 2.5 秒（首屏用户已经在等，多半秒换成功率划算），
+         * 手表上多等半秒更肉眼可见，所以维持原来的 2 秒。
+         */
+        private const val MDNS_TIMEOUT_MS = 2000L
         /** SECURITY-FIX: Shared preferences file name for encrypted credential storage. */
         private const val PREFS_FILE = "galaxy_config"
         /** SECURITY-FIX: Key name for auth token in encrypted preferences. */
@@ -188,7 +198,10 @@ class GalaxyWearApplication : Application() {
     }
 
     // WARNING-9: Reusable discovery components to avoid creating new instances on every call.
-    private val mdnsDiscovery by lazy { MdnsDiscovery(this) }
+    // 手表此前自带一份 MdnsDiscovery，与安卓仓 :shared-transport 的 GatewayDiscovery
+    // 是同一件事的两份实现：同一个服务类型、同一个尾点坑、同一套 listener 清理。
+    // 两份就意味着补丁只打在一边 —— 现在共用同一份。
+    private val gatewayDiscovery by lazy { GatewayDiscovery(this) }
     private val tailscaleAdapter by lazy { TailscaleAdapter(this) }
 
     /**
@@ -704,9 +717,11 @@ class GalaxyWearApplication : Application() {
         // 1. Try mDNS LAN discovery first (zero-config, fastest)
         // CRITICAL-6: isWifiAvailable() relies on ConnectivityManager APIs that may behave
         // differently on Android 10+; ensure proper permissions (ACCESS_NETWORK_STATE).
-        if (mdnsDiscovery.isWifiAvailable()) {
+        if (isWifiAvailable(this)) {
             Log.i(TAG, "Discovery: trying mDNS LAN...")
-            val lanUrl = mdnsDiscovery.discoverGateway()
+            // 2 秒保持手表侧原有的发现窗口 —— 共享类的默认值是 2.5 秒（手机首屏用户
+            // 已经在等，多半秒换成功率划算），手表上多等半秒更肉眼可见，不跟着改。
+            val lanUrl = gatewayDiscovery.discover(timeoutMs = MDNS_TIMEOUT_MS)?.wsUrl
             if (lanUrl != null) {
                 Log.i(TAG, "Discovery: found via mDNS: $lanUrl")
                 return lanUrl
@@ -733,7 +748,7 @@ class GalaxyWearApplication : Application() {
      */
     fun getNetworkStatus(): String {
         // WARNING-9: Reuse cached discovery instances.
-        val wifi = mdnsDiscovery.isWifiAvailable()
+        val wifi = isWifiAvailable(this)
         val ts = tailscaleAdapter.isInTailscaleNetwork()
         val tsIp = tailscaleAdapter.getLocalTailscaleIp()
         return when {
