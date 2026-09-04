@@ -193,6 +193,18 @@ dependencies {
     // HiveMQ MQTT Client
     implementation("com.hivemq:hivemq-mqtt-client:1.3.3")
 
+    // WebRTC —— 实时语音通话的媒体通道。
+    //
+    // 为什么不走已有的 AIP WebSocket:AIP 建在 TCP 上,丢一个包后面全被堵住,而重传
+    // 回来的是过期音频。实时语音里迟到的音频没有价值,只会把延迟越堆越高。手表走独立
+    // 蜂窝数据时这一点尤其致命。
+    //
+    // 为什么是 io.getstream 这个坐标:Google 官方的 org.webrtc:google-webrtc 停更在
+    // 2019 年(1.0.32006)且随 JCenter 一起没了。Stream 这一份是当前在维护的 libwebrtc
+    // Android 预编译包,包名仍是 org.webrtc,minSdk 21,含 arm64-v8a / armeabi-v7a /
+    // x86 / x86_64 四个 ABI —— 手表用得上的两个都在。
+    implementation("io.getstream:stream-webrtc-android:1.3.10")
+
     // Testing
     testImplementation("junit:junit:4.13.2")
 }
