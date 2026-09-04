@@ -24,6 +24,7 @@ import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.galaxy.wear.auth.PairClaimClient
 import com.galaxy.wear.domain.model.Phase
 import com.galaxy.wear.ui.screens.PairClaimScreen
+import com.galaxy.wear.ui.screens.CallScreen
 import com.galaxy.wear.ui.screens.DevicesScreen
 import com.galaxy.wear.ui.screens.HomeScreen
 import com.galaxy.wear.ui.screens.SettingsScreen
@@ -162,6 +163,7 @@ class MainActivity : ComponentActivity() {
                                 isAmbient = ambient,
                                 onDevices = { navController.navigate("agents") },
                                 onVoice = { navController.navigate("voice") },
+                                onCall = { navController.navigate("call") },
                                 onSettings = { navController.navigate("settings") },
                                 islandItems = islandItems,
                             )
@@ -174,6 +176,14 @@ class MainActivity : ComponentActivity() {
                         }
                         composable("voice") {
                             VoiceScreen(
+                                isAmbient = ambient,
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
+                        // 实时通话。与 "voice"(按住说话,一问一答)是两条路:那条适合
+                        // 说一句就完事,这条适合像打电话一样来回聊。
+                        composable("call") {
+                            CallScreen(
                                 isAmbient = ambient,
                                 onBack = { navController.popBackStack() }
                             )

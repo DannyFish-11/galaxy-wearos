@@ -31,6 +31,9 @@
     <!-- Foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- 通话期间的麦克风型前台服务。Android 14 起后台访问麦克风必须有这一条,
+         否则表现是「抬手看表能说话,手一放下 AI 就听不见了」,而且不报任何错。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
     <!-- ROUND-2-FIX: Android 13+ (API 33, targetSdk=35 强制) 通知运行时权限。
          缺省时所有通知被系统静默丢弃 —— 决策通知(HITL)永远不可见,
@@ -110,6 +113,13 @@
         </activity>
 
         <!-- Background Lumiv service -->
+        <!-- 通话期间才起,挂断即停。不把 microphone 类型并进常驻的 GalaxyWearService:
+             那等于表上常年挂着一个录音指示灯。 -->
+        <service
+            android:name=".call.VoiceCallService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
         <service
             android:name=".service.GalaxyWearService"
             android:exported="false"

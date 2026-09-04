@@ -8,6 +8,7 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Settings
@@ -42,6 +43,8 @@ fun HomeScreen(
     phase: Phase,
     isAmbient: Boolean = false,
     onVoice: () -> Unit,
+    /** 进入实时通话。与 [onVoice] 的一问一答是两条路,不是同一件事的两种入口。 */
+    onCall: () -> Unit,
     onDevices: () -> Unit,
     onSettings: () -> Unit,
     islandItems: List<com.galaxy.wear.ui.components.IslandItem> = emptyList(),
@@ -120,6 +123,19 @@ fun HomeScreen(
                         icon = {
                             Icon(
                                 imageVector = Icons.Default.Mic,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        },
+                        colors = ChipDefaults.primaryChipColors(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    CompactChip(
+                        onClick = { triggerHaptic(context); onCall() },
+                        label = { Text("通话", style = MaterialTheme.typography.caption2) },
+                        icon = {
+                            Icon(
+                                imageVector = Icons.Default.Call,
                                 contentDescription = null,
                                 modifier = Modifier.size(14.dp)
                             )
