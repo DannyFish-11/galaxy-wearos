@@ -14,6 +14,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.galaxy.wear.GalaxyWearApplication
+import com.galaxy.wear.R
 import com.galaxy.wear.MainActivity
 import com.ufo.galaxy.shared.protocol.DeviceIdProvider
 import kotlinx.coroutines.CoroutineScope
@@ -122,7 +123,7 @@ class VoiceCallService : Service() {
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("通话中")
             .setContentText("与 AI 实时通话")
-            .setSmallIcon(android.R.drawable.stat_sys_phone_call)
+            .setSmallIcon(R.drawable.ic_call_notification)
             .setOngoing(true)
             .setContentIntent(open)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "挂断", hangup)
