@@ -125,6 +125,16 @@ class GalaxyWearApplication : Application() {
     // WARNING-7: aipClient is initialized in onCreate with try-catch protection.
     // If initialization fails, aipClient remains null and isAipClientReady returns false.
     lateinit var aipClient: AIPClient
+
+    /**
+     * 手表上的会话上下文。
+     *
+     * 公开出来,是因为界面(会话列表)与通知里的快捷回复都要读写它 ——
+     * 它和 [aipClient] 一样是这个进程里的单一实例:两份实例会各存各的,
+     * 于是通知里回的那句话在会话列表里看不到。
+     */
+    lateinit var conversationRecorder: com.galaxy.wear.conversation.ConversationRecorder
+        private set
         private set
 
     /** Safe check before accessing [aipClient] to avoid UninitializedPropertyAccessException. */
@@ -269,12 +279,22 @@ class GalaxyWearApplication : Application() {
         super.onCreate()
         Log.i(TAG, "Galaxy Wear OS starting...")
 
+        conversationRecorder = com.galaxy.wear.conversation.ConversationRecorder(
+            com.galaxy.wear.conversation.ConversationStore(
+                com.galaxy.wear.conversation.FileConversationStore.forContext(this)
+            )
+        )
+
         // WARNING-7: Wrap AIPClient initialization to prevent UninitializedPropertyAccessException
         // on subsequent accesses if the constructor throws.
         try {
             aipClient = AIPClient(
                 context = this,
-                scope = appScope
+                scope = appScope,
+                // 会话上下文:发出去的语音提问与收回来的回复都记进手表本地。
+                // 此前这两个方向都在线上跑,但**回复那条没有任何代码读它** ——
+                // 问出去的答案到了手表就被丢掉,于是手表上一条会话记录都没有。
+                conversationRecorder = conversationRecorder,
             )
             // PR-AIP-UNIFIED-WEAR: Register WebSocket adapter to unified transport manager.
             // AIPClient 实现的是本仓 com.galaxy.wear.network.GatewayClient,而

@@ -58,6 +58,16 @@ class AIPClient(
     private val context: Context,
     private val scope: CoroutineScope,
     private val useBinaryFormat: Boolean = false,
+    /**
+     * 会话记录器。非空时,发出去的语音提问与收回来的回复都会被记进手表的上下文。
+     *
+     * 此前这两个方向**都在线上跑、但都没被存过** —— 尤其是回复:服务端把正文放在
+     * `command_result` 的 `payload.data.text` 里送回来,手表侧没有任何代码读它,
+     * 问出去的答案到了手表就被丢掉。
+     *
+     * null(默认,单测用)= 不记录,行为与引入前一致。
+     */
+    private val conversationRecorder: com.galaxy.wear.conversation.ConversationRecorder? = null,
 ) : com.galaxy.wear.network.GatewayClient {
     // X-API-CR1: Simplified JSON format — polymorphic serialization removed
     // because AIPMessage is now a plain data class with MsgType enum.
@@ -489,7 +499,12 @@ class AIPClient(
     // -----------------------------------------------------------------
 
     // X-API-CR1: Command now uses data class with MsgType + JsonObject payload
-    suspend fun sendCommand(command: String, payload: JsonObject? = null) {
+    suspend fun sendCommand(
+        command: String,
+        payload: JsonObject? = null,
+        /** 调用方指定的相关 id;留空时内部生成。语音提问要指定,回复靠它认领。 */
+        correlationId: String = "",
+    ) {
         val cmdPayload = buildJsonObject {
             put("id", messageId.incrementAndGet())
             put("command", command)
@@ -501,16 +516,24 @@ class AIPClient(
             type = MsgType.COMMAND,
             payload = cmdPayload,
             deviceId = deviceId,
-            correlationId = "cmd_${messageId.get()}"
+            correlationId = correlationId.ifBlank { "cmd_${messageId.get()}" }
         )
         sendJson(msg)
     }
 
     suspend fun sendVoiceQuery(transcript: String) {
-        sendCommand("voice_query", buildJsonObject {
-            put("text", transcript)
-            put("source", "wear_os")
-        })
+        // 自己造 correlationId 而不是让 sendCommand 内部生成:回复回来时要靠它认领。
+        // command_result 同时也是**设备命令**的结果,不配对就无从分辨哪条是对话。
+        val correlationId = "cmd_${messageId.incrementAndGet()}"
+        conversationRecorder?.recordUserQuery(transcript, correlationId = correlationId)
+        sendCommand(
+            "voice_query",
+            buildJsonObject {
+                put("text", transcript)
+                put("source", "wear_os")
+            },
+            correlationId = correlationId,
+        )
     }
 
     suspend fun sendPhaseReport(phase: String) {
@@ -595,12 +618,51 @@ class AIPClient(
                         put("success", json["success"] ?: JsonPrimitive(false))
                         put("data", json["data"] ?: JsonNull)
                     }
+                    val resultCorrelationId = json["correlation_id"]?.jsonPrimitive?.content ?: ""
+                    // 服务端把语音回复的正文放在 data.text(兼容 data.response)。
+                    // 只有能和先前的提问配上对的才算对话内容 —— 配不上的是设备命令结果。
+                    conversationRecorder?.let { rec ->
+                        val data = json["data"] as? JsonObject
+                        val replyText = data?.get("text")?.jsonPrimitive?.contentOrNull
+                            ?: data?.get("response")?.jsonPrimitive?.contentOrNull
+                            ?: ""
+                        rec.recordCommandResult(resultCorrelationId, replyText)
+                    }
                     emitMessage(AIPMessage(
                         type = MsgType.COMMAND_RESULT,
                         payload = resultPayload,
                         deviceId = deviceId,
-                        correlationId = json["correlation_id"]?.jsonPrimitive?.content ?: ""
+                        correlationId = resultCorrelationId
                     ))
+                }
+                "agent_message" -> {
+                    // 智能体主动发来的一条消息 —— 不回答任何提问,那正是这条协议
+                    // 类型存在的理由(见 v2 galaxy_gateway/protocol/aip_v3.AGENT_MESSAGE)。
+                    val text = json["text"]?.jsonPrimitive?.contentOrNull
+                        ?: (json["payload"] as? JsonObject)?.get("text")?.jsonPrimitive?.contentOrNull
+                        ?: ""
+                    val conversationId = json["conversation_id"]?.jsonPrimitive?.contentOrNull
+                        ?: (json["payload"] as? JsonObject)?.get("conversation_id")?.jsonPrimitive?.contentOrNull
+                        ?: ""
+                    // 用服务端给的 message_id 去重:断线补发才不会记成两条、弹两次通知。
+                    val serverId = json["message_id"]?.jsonPrimitive?.contentOrNull ?: ""
+                    val recorded = conversationRecorder?.recordAgentMessage(
+                        text = text,
+                        conversationId = conversationId,
+                        messageId = serverId,
+                    )
+                    // 只有**真的记进去了**才往上抛(去重掉的那条不该再弹一次通知)。
+                    if (recorded != null) {
+                        emitMessage(AIPMessage(
+                            type = MsgType.AGENT_MESSAGE,
+                            payload = buildJsonObject {
+                                put("text", recorded.text)
+                                put("conversation_id", recorded.conversationId)
+                                put("message_id", recorded.id)
+                            },
+                            deviceId = deviceId,
+                        ))
+                    }
                 }
                 "event" -> {
                     // X-DATA-CR1: Emit unified AIPMessage data class with EVENT type
