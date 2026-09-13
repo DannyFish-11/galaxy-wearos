@@ -422,6 +422,7 @@ class GalaxyWearApplication : Application() {
                             MsgType.LIQUID_EVENT,
                             MsgType.STATE_EVENT -> handleStateEvent(msg)
                             MsgType.DECISION_REQUEST -> handleDecisionRequest(msg)
+                            MsgType.AGENT_MESSAGE -> handleAgentMessage(msg)
                             else -> {} // Ignore other types
                         }
                     }
@@ -566,6 +567,41 @@ class GalaxyWearApplication : Application() {
     // directly without first dismissing to the notification shade. Both paths
     // reply through the same real human_input command — answering in one place
     // resolves the other (dismissIslandItem removes the in-app copy once sent).
+    /**
+     * 智能体主动发来的一条消息 —— 弹一条平常手表上那种消息通知。
+     *
+     * 这条消息在 [com.galaxy.wear.data.AIPClient] 里**已经**被记进会话上下文了
+     * (并且用服务端 message_id 去过重)。能走到这里,说明它是新的一条 ——
+     * 补发的那条在那一层就被拦掉,不会在手腕上震第二次。
+     */
+    private fun handleAgentMessage(event: com.galaxy.wear.data.AIPMessage) {
+        try {
+            val payload = event.payload as? JsonObject ?: return
+            val text = payload["text"]?.jsonPrimitive?.content.orEmpty()
+            if (text.isBlank()) return
+            val messageId = payload["message_id"]?.jsonPrimitive?.content.orEmpty()
+            val conversationId = payload["conversation_id"]?.jsonPrimitive?.content.orEmpty()
+            Log.i(TAG, "AgentMessage: id=$messageId len=${text.length}")
+
+            val intent = android.content.Intent(this, GalaxyWearService::class.java).apply {
+                action = GalaxyWearService.ACTION_SHOW_MESSAGE
+                putExtra(GalaxyWearService.EXTRA_MESSAGE_ID, messageId)
+                putExtra(GalaxyWearService.EXTRA_MESSAGE_TEXT, text)
+                putExtra(GalaxyWearService.EXTRA_MESSAGE_TITLE, payload["title"]?.jsonPrimitive?.content.orEmpty())
+                putExtra(GalaxyWearService.EXTRA_CONVERSATION_ID, conversationId)
+                // 只有协议说了期待回复,通知上才给回复入口 —— 每条都挂一个回复框,
+                // 会让"只是告诉你一声"的那些也显得在等你答话。
+                putExtra(
+                    GalaxyWearService.EXTRA_REPLY_EXPECTED,
+                    payload["reply_expected"]?.jsonPrimitive?.content?.toBoolean() ?: false,
+                )
+            }
+            androidx.core.content.ContextCompat.startForegroundService(this, intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "处理 agent_message 失败: ${e.message}")
+        }
+    }
+
     private fun handleDecisionRequest(event: AIPMessage) {
         try {
             val payload = event.payload as? JsonObject ?: return
