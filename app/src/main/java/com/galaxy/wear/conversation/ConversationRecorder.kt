@@ -116,6 +116,10 @@ class ConversationRecorder(
      * 界面从这里读,而不是自己再持一份 [ConversationStore] —— 两份实例会各存各的,
      * 于是通知里回的那句话在会话列表里看不到。
      */
+    /** 可观察的全量会话。界面直接 collect 它,不用自己轮询。 */
+    val messages: kotlinx.coroutines.flow.StateFlow<List<ConversationMessage>>
+        get() = store.snapshot
+
     fun history(conversationId: String = ""): List<ConversationMessage> =
         store.conversation(conversationId)
 

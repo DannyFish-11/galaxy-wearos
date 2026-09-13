@@ -1,5 +1,9 @@
 package com.galaxy.wear.conversation
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
 /**
  * 手表上的**会话上下文**。
  *
@@ -48,6 +52,20 @@ class ConversationStore(
     private val seenIds: MutableSet<String> =
         messages.mapTo(mutableSetOf()) { it.id }
 
+    private val _snapshot = MutableStateFlow(messages.toList())
+
+    /**
+     * 可观察的全量快照,按发生时间升序 —— 和 [all] 同一份内容。
+     *
+     * 会话界面需要它:消息是被动到达的(agent 主动说话、命令回执),界面开着的时候
+     * 来了一条,得当场出现在列表里。没有它就只能在进入界面那一刻读一次,之后这一屏
+     * 是死的 —— 用户会以为"手表没收到",实际上收到了、只是没画出来。
+     *
+     * 每次 [append]/[clear] 都会发一份新的不可变列表,所以 Compose 的
+     * collectAsState 能正确识别为新值(而不是同一个可变对象被改了、比较相等、不重组)。
+     */
+    val snapshot: StateFlow<List<ConversationMessage>> = _snapshot.asStateFlow()
+
     /**
      * 记一条。返回是否真的记进去了(false = 这条 id 已经有了)。
      *
@@ -65,7 +83,9 @@ class ConversationStore(
             val dropped = messages.removeAt(0)
             seenIds.remove(dropped.id)
         }
-        store.write(messages.toList())
+        val current = messages.toList()
+        store.write(current)
+        _snapshot.value = current
         true
     }
 
@@ -88,6 +108,7 @@ class ConversationStore(
         messages.clear()
         seenIds.clear()
         store.write(emptyList())
+        _snapshot.value = emptyList()
     }
 
     companion object {
