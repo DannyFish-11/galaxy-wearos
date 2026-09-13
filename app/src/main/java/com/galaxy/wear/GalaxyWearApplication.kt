@@ -135,7 +135,6 @@ class GalaxyWearApplication : Application() {
      */
     lateinit var conversationRecorder: com.galaxy.wear.conversation.ConversationRecorder
         private set
-        private set
 
     /** Safe check before accessing [aipClient] to avoid UninitializedPropertyAccessException. */
     fun isAipClientReady(): Boolean = ::aipClient.isInitialized
