@@ -421,6 +421,7 @@ class GalaxyWearApplication : Application() {
                             MsgType.LIQUID_EVENT,
                             MsgType.STATE_EVENT -> handleStateEvent(msg)
                             MsgType.DECISION_REQUEST -> handleDecisionRequest(msg)
+                            MsgType.DECISION_WITHDRAW -> handleDecisionWithdraw(msg)
                             MsgType.AGENT_MESSAGE -> handleAgentMessage(msg)
                             else -> {} // Ignore other types
                         }
@@ -598,6 +599,36 @@ class GalaxyWearApplication : Application() {
             androidx.core.content.ContextCompat.startForegroundService(this, intent)
         } catch (e: Exception) {
             Log.e(TAG, "处理 agent_message 失败: ${e.message}")
+        }
+    }
+
+    /**
+     * 这条决策不用管了 —— 把通知收起来。
+     *
+     * 一条 decision_request 会被**并行分叉**给所有连着的手表与手机。此前某一台答完
+     * 之后,其余每一台上那条还挂着:点它服务端是 no-op,可本地的 ReplyReceiver 会把
+     * 通知消掉,于是用户以为自己答了,实际什么都没发生;更糟的是他可能在那边给了个
+     * **不同**的答案。
+     *
+     * 服务端现在会在决策落定后发 decision_withdraw(SIP 分叉的 CANCEL 那一步)。
+     * 这里接住它。
+     *
+     * reason 是封闭枚举(answered_elsewhere / timed_out / cancelled / superseded)。
+     * 目前四种都是静默收起 —— 区分开是为了排障时看得出这条是怎么没的,以及将来
+     * "超时"那种可以留一条痕迹而"别人答了"不该留。
+     */
+    private fun handleDecisionWithdraw(event: AIPMessage) {
+        try {
+            val payload = event.payload as? JsonObject ?: return
+            val decisionId = payload["decision_id"]?.jsonPrimitive?.content ?: return
+            val reason = payload["reason"]?.jsonPrimitive?.content ?: "cancelled"
+            Log.i(TAG, "DecisionWithdraw: id=$decisionId reason=$reason")
+            // 通知 id 必须和 GalaxyWearService 弹它时用的那个一致 —— 两处都是
+            // decisionId.hashCode()。不一致就收不掉,而且收不掉这件事没有任何报错。
+            androidx.core.app.NotificationManagerCompat.from(this)
+                .cancel(decisionId.hashCode())
+        } catch (e: Exception) {
+            Log.w(TAG, "撤回决策通知失败: ${e.message}")
         }
     }
 
