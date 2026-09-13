@@ -3,6 +3,7 @@ package com.galaxy.wear.conversation
 import android.content.Context
 import android.util.Log
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -37,7 +38,7 @@ class FileConversationStore(private val file: File) : ConversationStore.Store {
     override fun read(): List<ConversationMessage> {
         if (!file.exists()) return emptyList()
         return try {
-            JSON.decodeFromString<List<Entry>>(file.readText()).mapNotNull { e ->
+            JSON.decodeFromString(ENTRIES, file.readText()).mapNotNull { e ->
                 val role = runCatching { ConversationMessage.Role.valueOf(e.role) }.getOrNull()
                     ?: return@mapNotNull null // 未知角色（新版本写的）：跳过这一条，别丢掉整个文件
                 ConversationMessage(e.id, e.conversationId, role, e.text, e.timestampMs)
@@ -52,7 +53,8 @@ class FileConversationStore(private val file: File) : ConversationStore.Store {
         try {
             file.parentFile?.mkdirs()
             val text = JSON.encodeToString(
-                messages.map { Entry(it.id, it.conversationId, it.role.name, it.text, it.timestampMs) }
+                ENTRIES,
+                messages.map { Entry(it.id, it.conversationId, it.role.name, it.text, it.timestampMs) },
             )
             // 先写临时文件再改名：中途断电不会留下半截 JSON，
             // 而半截 JSON 会让下次读取整个失败、历史全丢。
@@ -71,6 +73,11 @@ class FileConversationStore(private val file: File) : ConversationStore.Store {
         private const val TAG = "FileConversationStore"
         private const val FILE_NAME = "conversation.json"
         private val JSON = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+        // 显式列表序列化器,而不是 reified 的 encodeToString<T>/decodeFromString<T>:
+        // 那两个是 kotlinx.serialization 包下的 inline 扩展,少一行 import 就会静默
+        // 退化到"需要显式 serializer"的成员重载上、编译不过。写死它,少一处隐式依赖。
+        private val ENTRIES = ListSerializer(Entry.serializer())
 
         /** App 私有目录下的默认位置。 */
         fun forContext(context: Context): FileConversationStore =
