@@ -651,7 +651,9 @@ class GalaxyWearApplication : Application() {
                         MsgType.EXECUTION_COMMITMENT.value,
                         buildJsonObject {
                             put("proposal_id", proposalId)
-                            put("device_id", aipClient.deviceId)
+                            // 不带 device_id:AIPClient.deviceId 是 private,而且**本来就不该由这里带**。
+                            // 中心以连接上的 device_id 为准 —— 设备自报的那个字段可以填别人的 id,
+                            // 收了就等于允许冒名顶替。信封上的 device_id 由 sendCommand 带,那才是权威的。
                             // accepted 必须是真正的 Boolean:中心判的是 `is True`,
                             // 字符串 "false" 和 "true" 都会被当成"不接" —— 后者是巧合,不是设计。
                             put("accepted", false)
