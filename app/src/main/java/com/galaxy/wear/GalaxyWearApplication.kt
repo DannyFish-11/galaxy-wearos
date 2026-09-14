@@ -423,6 +423,7 @@ class GalaxyWearApplication : Application() {
                             MsgType.DECISION_REQUEST -> handleDecisionRequest(msg)
                             MsgType.DECISION_WITHDRAW -> handleDecisionWithdraw(msg)
                             MsgType.AGENT_MESSAGE -> handleAgentMessage(msg)
+                            MsgType.EXECUTION_PROPOSAL -> handleExecutionProposal(msg)
                             else -> {} // Ignore other types
                         }
                     }
@@ -617,6 +618,55 @@ class GalaxyWearApplication : Application() {
      * 目前四种都是静默收起 —— 区分开是为了排障时看得出这条是怎么没的,以及将来
      * "超时"那种可以留一条痕迹而"别人答了"不该留。
      */
+    /**
+     * 中心在多台候选里挑一台之前,会问一轮「这件事你能不能做」。手表的答案是
+     * **`unsupported`** —— 而且必须把这句话说出口,不能沉默。
+     *
+     * ## 为什么手表会被问到
+     *
+     * 中心按 `DeviceType.ANDROID` 挑候选,而 `ANDROID_WEAR` 就在这一类里 ——
+     * 手表和手机会落进同一个候选池。
+     *
+     * ## 为什么沉默比说"不"更糟
+     *
+     * 中心把沉默记成 `no_response`。而「全场都是 no_response」被中心解释成
+     * "这批设备根本不认识协商",于是**原样放行全部候选** —— 手表又回到候选里了。
+     * 明确说一句 unsupported,手表当场出局,手机独得这一轮;这才是这轮问话的意义。
+     *
+     * ## 为什么答案是写死的
+     *
+     * 手表上没有任何任务执行路径:整个 app 不处理 `task_assign`,也不处理
+     * `goal_execution`。它是通知、对话、通话和人在回路的决策界面,不是执行面。
+     * 这不是保守起见留的余地,是此刻可查证的事实;哪天手表真有了执行面,
+     * 这个方法要跟着改,而不是让它偷偷答应下来。
+     */
+    private fun handleExecutionProposal(event: AIPMessage) {
+        try {
+            val payload = event.payload as? JsonObject ?: return
+            val proposalId = payload["proposal_id"]?.jsonPrimitive?.content ?: return
+            Log.i(TAG, "ExecutionProposal: id=$proposalId → unsupported(手表没有执行面)")
+            appScope.launch {
+                try {
+                    aipClient.sendCommand(
+                        MsgType.EXECUTION_COMMITMENT.value,
+                        buildJsonObject {
+                            put("proposal_id", proposalId)
+                            put("device_id", aipClient.deviceId)
+                            // accepted 必须是真正的 Boolean:中心判的是 `is True`,
+                            // 字符串 "false" 和 "true" 都会被当成"不接" —— 后者是巧合,不是设计。
+                            put("accepted", false)
+                            put("decline_reason", "unsupported")
+                        },
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "回复 execution_proposal 失败: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "处理 execution_proposal 失败: ${e.message}")
+        }
+    }
+
     private fun handleDecisionWithdraw(event: AIPMessage) {
         try {
             val payload = event.payload as? JsonObject ?: return
