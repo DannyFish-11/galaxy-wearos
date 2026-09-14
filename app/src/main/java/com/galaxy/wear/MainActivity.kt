@@ -25,6 +25,7 @@ import com.galaxy.wear.auth.PairClaimClient
 import com.galaxy.wear.domain.model.Phase
 import com.galaxy.wear.ui.screens.PairClaimScreen
 import com.galaxy.wear.ui.screens.CallScreen
+import com.galaxy.wear.ui.screens.ConversationScreen
 import com.galaxy.wear.ui.screens.DevicesScreen
 import com.galaxy.wear.ui.screens.HomeScreen
 import com.galaxy.wear.ui.screens.SettingsScreen
@@ -164,6 +165,7 @@ class MainActivity : ComponentActivity() {
                                 onDevices = { navController.navigate("agents") },
                                 onVoice = { navController.navigate("voice") },
                                 onCall = { navController.navigate("call") },
+                                onConversation = { navController.navigate("conversation") },
                                 onSettings = { navController.navigate("settings") },
                                 islandItems = islandItems,
                             )
@@ -184,6 +186,14 @@ class MainActivity : ComponentActivity() {
                         // 说一句就完事,这条适合像打电话一样来回聊。
                         composable("call") {
                             CallScreen(
+                                isAmbient = ambient,
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
+                        // 会话记录。手表此前是一次性的:说一句答一句,答完就没了 ——
+                        // 这一屏是唯一能回答"它刚才说什么来着"的地方。
+                        composable("conversation") {
+                            ConversationScreen(
                                 isAmbient = ambient,
                                 onBack = { navController.popBackStack() }
                             )

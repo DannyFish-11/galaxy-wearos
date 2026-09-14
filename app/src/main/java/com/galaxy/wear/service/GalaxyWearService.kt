@@ -61,6 +61,25 @@ class GalaxyWearService : LifecycleService() {
         /** 与 EXTRA_DECISION_OPTIONS 一一对应的**显示文字**。
          *  只传 id 的话,手腕上的按钮印的是 `approve`/`deny` 这种协议字面量。 */
         const val EXTRA_DECISION_LABELS = "decision_labels"
+        /**
+         * 智能体主动发来的消息用的渠道。
+         *
+         * 刻意**不**复用决策渠道:那条是 IMPORTANCE_HIGH + CATEGORY_ALARM,
+         * 语义是"停下手里的事,等你拿主意"。一条普通消息用闹钟的手感推过来,
+         * 用户不看屏幕就分不出哪条是真要他决定的 —— 而那恰恰是决策渠道存在的理由。
+         * 这条按平常手表消息的规格走:DEFAULT 重要性、消息类别、消息到达的触感。
+         */
+        const val CHANNEL_ID_MESSAGES = "galaxy_wear_messages"
+
+        /** 智能体主动发来一条消息(AIP agent_message)。 */
+        const val ACTION_SHOW_MESSAGE = "com.galaxy.wear.SHOW_MESSAGE"
+        const val EXTRA_MESSAGE_ID = "message_id"
+        const val EXTRA_MESSAGE_TEXT = "message_text"
+        const val EXTRA_MESSAGE_TITLE = "message_title"
+        const val EXTRA_CONVERSATION_ID = "conversation_id"
+        /** 是否在通知上给出直接回复入口(协议里的 reply_expected)。 */
+        const val EXTRA_REPLY_EXPECTED = "reply_expected"
+
         const val TAG = "GalaxyWearService"
 
         /** 个人静息心率基线的本地存放键。**只存在本机加密偏好里,不上传。** */
@@ -129,6 +148,19 @@ class GalaxyWearService : LifecycleService() {
             }
         }
 
+        if (intent?.action == ACTION_SHOW_MESSAGE) {
+            val text = intent.getStringExtra(EXTRA_MESSAGE_TEXT).orEmpty()
+            if (text.isNotBlank()) {
+                showAgentMessageNotification(
+                    text = text,
+                    title = intent.getStringExtra(EXTRA_MESSAGE_TITLE).orEmpty(),
+                    messageId = intent.getStringExtra(EXTRA_MESSAGE_ID).orEmpty(),
+                    conversationId = intent.getStringExtra(EXTRA_CONVERSATION_ID).orEmpty(),
+                    replyExpected = intent.getBooleanExtra(EXTRA_REPLY_EXPECTED, false),
+                )
+            }
+        }
+
         synchronized(this) {
             if (!isRunning) {
                 isRunning = true
@@ -183,6 +215,23 @@ class GalaxyWearService : LifecycleService() {
                     .toWaveformTimings()
             }
             nm.createNotificationChannel(decisionChannel)
+
+            // 智能体主动发来的消息。DEFAULT 而不是 HIGH:它该像平常手表上那种消息
+            // 推送,不该是闹钟 —— 决策渠道的那份"等距三拍"要留给真正需要拿主意的事。
+            val messageChannel = NotificationChannel(
+                CHANNEL_ID_MESSAGES,
+                "Galaxy 消息",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "智能体发来的消息"
+                enableVibration(true)
+                // Android O+ 上振动由**渠道**决定,Builder 上的 setVibrate 被忽略。
+                // 用词汇表里那条早就定义好、却从来没有东西产生过的 MESSAGE_ARRIVAL。
+                vibrationPattern = HapticVocabulary
+                    .patternFor(HapticType.MESSAGE_ARRIVAL)
+                    .toWaveformTimings()
+            }
+            nm.createNotificationChannel(messageChannel)
         }
     }
 
@@ -450,5 +499,63 @@ class GalaxyWearService : LifecycleService() {
 
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(decisionId.hashCode(), builder.build())
+    }
+
+    /**
+     * 智能体主动发来的一条消息 —— 就是平常手表上那种消息推送。
+     *
+     * 与决策通知的三处刻意不同:
+     *
+     *  · 渠道是 [CHANNEL_ID_MESSAGES](DEFAULT 重要性),不是决策那条 HIGH ——
+     *    一条普通消息不该用闹钟的手感;
+     *  · 类别是 `CATEGORY_MESSAGE` 而不是 `CATEGORY_ALARM` —— 系统据此决定
+     *    免打扰时段怎么处理它,把消息报成闹钟会在深夜把人吵醒;
+     *  · 只在协议说了 `reply_expected` 时才给回复入口。每条消息都挂一个回复框,
+     *    会让"只是告诉你一声"的那些也显得在等你答话。
+     *
+     * 通知 id 用 [messageId] 的哈希:同一条消息补发时覆盖而不是再弹一条。
+     */
+    fun showAgentMessageNotification(
+        text: String,
+        title: String,
+        messageId: String,
+        conversationId: String,
+        replyExpected: Boolean,
+    ) {
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID_MESSAGES)
+            .setContentTitle(title.ifBlank { "Galaxy" })
+            .setContentText(text)
+            // 手表屏幕窄,长消息不展开就只剩第一行。
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setSmallIcon(android.R.drawable.ic_dialog_email)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setAutoCancel(true)
+
+        if (replyExpected) {
+            val replyIntent = Intent(this, ReplyReceiver::class.java).apply {
+                action = ReplyReceiver.ACTION_MESSAGE_REPLY
+                putExtra(ReplyReceiver.EXTRA_MESSAGE_ID, messageId)
+                putExtra(ReplyReceiver.EXTRA_CONVERSATION_ID, conversationId)
+            }
+            val replyPending = PendingIntent.getBroadcast(
+                this, messageId.hashCode(), replyIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val remoteInput = RemoteInput.Builder(ReplyReceiver.EXTRA_VOICE_INPUT)
+                .setLabel("回复...")
+                .setAllowFreeFormInput(true)
+                .build()
+            builder.extend(
+                NotificationCompat.WearableExtender().addAction(
+                    NotificationCompat.Action.Builder(
+                        android.R.drawable.ic_btn_speak_now, "回复", replyPending
+                    ).addRemoteInput(remoteInput).build()
+                )
+            )
+        }
+
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(messageId.hashCode(), builder.build())
     }
 }
