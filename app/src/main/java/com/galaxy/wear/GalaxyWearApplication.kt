@@ -125,6 +125,15 @@ class GalaxyWearApplication : Application() {
     // WARNING-7: aipClient is initialized in onCreate with try-catch protection.
     // If initialization fails, aipClient remains null and isAipClientReady returns false.
     lateinit var aipClient: AIPClient
+
+    /**
+     * 手表上的会话上下文。
+     *
+     * 公开出来,是因为界面(会话列表)与通知里的快捷回复都要读写它 ——
+     * 它和 [aipClient] 一样是这个进程里的单一实例:两份实例会各存各的,
+     * 于是通知里回的那句话在会话列表里看不到。
+     */
+    lateinit var conversationRecorder: com.galaxy.wear.conversation.ConversationRecorder
         private set
 
     /** Safe check before accessing [aipClient] to avoid UninitializedPropertyAccessException. */
@@ -269,12 +278,22 @@ class GalaxyWearApplication : Application() {
         super.onCreate()
         Log.i(TAG, "Galaxy Wear OS starting...")
 
+        conversationRecorder = com.galaxy.wear.conversation.ConversationRecorder(
+            com.galaxy.wear.conversation.ConversationStore(
+                com.galaxy.wear.conversation.FileConversationStore.forContext(this)
+            )
+        )
+
         // WARNING-7: Wrap AIPClient initialization to prevent UninitializedPropertyAccessException
         // on subsequent accesses if the constructor throws.
         try {
             aipClient = AIPClient(
                 context = this,
-                scope = appScope
+                scope = appScope,
+                // 会话上下文:发出去的语音提问与收回来的回复都记进手表本地。
+                // 此前这两个方向都在线上跑,但**回复那条没有任何代码读它** ——
+                // 问出去的答案到了手表就被丢掉,于是手表上一条会话记录都没有。
+                conversationRecorder = conversationRecorder,
             )
             // PR-AIP-UNIFIED-WEAR: Register WebSocket adapter to unified transport manager.
             // AIPClient 实现的是本仓 com.galaxy.wear.network.GatewayClient,而
@@ -402,6 +421,9 @@ class GalaxyWearApplication : Application() {
                             MsgType.LIQUID_EVENT,
                             MsgType.STATE_EVENT -> handleStateEvent(msg)
                             MsgType.DECISION_REQUEST -> handleDecisionRequest(msg)
+                            MsgType.DECISION_WITHDRAW -> handleDecisionWithdraw(msg)
+                            MsgType.AGENT_MESSAGE -> handleAgentMessage(msg)
+                            MsgType.EXECUTION_PROPOSAL -> handleExecutionProposal(msg)
                             else -> {} // Ignore other types
                         }
                     }
@@ -546,6 +568,122 @@ class GalaxyWearApplication : Application() {
     // directly without first dismissing to the notification shade. Both paths
     // reply through the same real human_input command — answering in one place
     // resolves the other (dismissIslandItem removes the in-app copy once sent).
+    /**
+     * 智能体主动发来的一条消息 —— 弹一条平常手表上那种消息通知。
+     *
+     * 这条消息在 [com.galaxy.wear.data.AIPClient] 里**已经**被记进会话上下文了
+     * (并且用服务端 message_id 去过重)。能走到这里,说明它是新的一条 ——
+     * 补发的那条在那一层就被拦掉,不会在手腕上震第二次。
+     */
+    private fun handleAgentMessage(event: com.galaxy.wear.data.AIPMessage) {
+        try {
+            val payload = event.payload as? JsonObject ?: return
+            val text = payload["text"]?.jsonPrimitive?.content.orEmpty()
+            if (text.isBlank()) return
+            val messageId = payload["message_id"]?.jsonPrimitive?.content.orEmpty()
+            val conversationId = payload["conversation_id"]?.jsonPrimitive?.content.orEmpty()
+            Log.i(TAG, "AgentMessage: id=$messageId len=${text.length}")
+
+            val intent = android.content.Intent(this, GalaxyWearService::class.java).apply {
+                action = GalaxyWearService.ACTION_SHOW_MESSAGE
+                putExtra(GalaxyWearService.EXTRA_MESSAGE_ID, messageId)
+                putExtra(GalaxyWearService.EXTRA_MESSAGE_TEXT, text)
+                putExtra(GalaxyWearService.EXTRA_MESSAGE_TITLE, payload["title"]?.jsonPrimitive?.content.orEmpty())
+                putExtra(GalaxyWearService.EXTRA_CONVERSATION_ID, conversationId)
+                // 只有协议说了期待回复,通知上才给回复入口 —— 每条都挂一个回复框,
+                // 会让"只是告诉你一声"的那些也显得在等你答话。
+                putExtra(
+                    GalaxyWearService.EXTRA_REPLY_EXPECTED,
+                    payload["reply_expected"]?.jsonPrimitive?.content?.toBoolean() ?: false,
+                )
+            }
+            androidx.core.content.ContextCompat.startForegroundService(this, intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "处理 agent_message 失败: ${e.message}")
+        }
+    }
+
+    /**
+     * 这条决策不用管了 —— 把通知收起来。
+     *
+     * 一条 decision_request 会被**并行分叉**给所有连着的手表与手机。此前某一台答完
+     * 之后,其余每一台上那条还挂着:点它服务端是 no-op,可本地的 ReplyReceiver 会把
+     * 通知消掉,于是用户以为自己答了,实际什么都没发生;更糟的是他可能在那边给了个
+     * **不同**的答案。
+     *
+     * 服务端现在会在决策落定后发 decision_withdraw(SIP 分叉的 CANCEL 那一步)。
+     * 这里接住它。
+     *
+     * reason 是封闭枚举(answered_elsewhere / timed_out / cancelled / superseded)。
+     * 目前四种都是静默收起 —— 区分开是为了排障时看得出这条是怎么没的,以及将来
+     * "超时"那种可以留一条痕迹而"别人答了"不该留。
+     */
+    /**
+     * 中心在多台候选里挑一台之前,会问一轮「这件事你能不能做」。手表的答案是
+     * **`unsupported`** —— 而且必须把这句话说出口,不能沉默。
+     *
+     * ## 为什么手表会被问到
+     *
+     * 中心按 `DeviceType.ANDROID` 挑候选,而 `ANDROID_WEAR` 就在这一类里 ——
+     * 手表和手机会落进同一个候选池。
+     *
+     * ## 为什么沉默比说"不"更糟
+     *
+     * 中心把沉默记成 `no_response`。而「全场都是 no_response」被中心解释成
+     * "这批设备根本不认识协商",于是**原样放行全部候选** —— 手表又回到候选里了。
+     * 明确说一句 unsupported,手表当场出局,手机独得这一轮;这才是这轮问话的意义。
+     *
+     * ## 为什么答案是写死的
+     *
+     * 手表上没有任何任务执行路径:整个 app 不处理 `task_assign`,也不处理
+     * `goal_execution`。它是通知、对话、通话和人在回路的决策界面,不是执行面。
+     * 这不是保守起见留的余地,是此刻可查证的事实;哪天手表真有了执行面,
+     * 这个方法要跟着改,而不是让它偷偷答应下来。
+     */
+    private fun handleExecutionProposal(event: AIPMessage) {
+        try {
+            val payload = event.payload as? JsonObject ?: return
+            val proposalId = payload["proposal_id"]?.jsonPrimitive?.content ?: return
+            Log.i(TAG, "ExecutionProposal: id=$proposalId → unsupported(手表没有执行面)")
+            appScope.launch {
+                try {
+                    aipClient.sendCommand(
+                        MsgType.EXECUTION_COMMITMENT.value,
+                        buildJsonObject {
+                            put("proposal_id", proposalId)
+                            // 不带 device_id:AIPClient.deviceId 是 private,而且**本来就不该由这里带**。
+                            // 中心以连接上的 device_id 为准 —— 设备自报的那个字段可以填别人的 id,
+                            // 收了就等于允许冒名顶替。信封上的 device_id 由 sendCommand 带,那才是权威的。
+                            // accepted 必须是真正的 Boolean:中心判的是 `is True`,
+                            // 字符串 "false" 和 "true" 都会被当成"不接" —— 后者是巧合,不是设计。
+                            put("accepted", false)
+                            put("decline_reason", "unsupported")
+                        },
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "回复 execution_proposal 失败: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "处理 execution_proposal 失败: ${e.message}")
+        }
+    }
+
+    private fun handleDecisionWithdraw(event: AIPMessage) {
+        try {
+            val payload = event.payload as? JsonObject ?: return
+            val decisionId = payload["decision_id"]?.jsonPrimitive?.content ?: return
+            val reason = payload["reason"]?.jsonPrimitive?.content ?: "cancelled"
+            Log.i(TAG, "DecisionWithdraw: id=$decisionId reason=$reason")
+            // 通知 id 必须和 GalaxyWearService 弹它时用的那个一致 —— 两处都是
+            // decisionId.hashCode()。不一致就收不掉,而且收不掉这件事没有任何报错。
+            androidx.core.app.NotificationManagerCompat.from(this)
+                .cancel(decisionId.hashCode())
+        } catch (e: Exception) {
+            Log.w(TAG, "撤回决策通知失败: ${e.message}")
+        }
+    }
+
     private fun handleDecisionRequest(event: AIPMessage) {
         try {
             val payload = event.payload as? JsonObject ?: return
