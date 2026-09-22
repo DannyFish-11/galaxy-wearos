@@ -61,10 +61,16 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            buildConfigField("String", "GALAXY_SERVER_URL", "\"wss://localhost:9000\"")
-            // SECURITY-FIX: API_VERSION aligned with Android app (v3.0)
-            buildConfigField("String", "API_VERSION", "\"v3.0\"")
-            buildConfigField("String", "WS_PATH", "\"/ws\"")
+            // GALAXY_SERVER_URL / API_VERSION / WS_PATH 三个字段删掉了 —— **没有任何代码读它们**
+            // (实测:全仓 BuildConfig.GALAXY_SERVER_URL / .API_VERSION / .WS_PATH 各 0 次引用)。
+            //
+            // 留着比删掉更坏:它们让人以为 release 版会去连 `wss://localhost:9000`,
+            // 而手表上 localhost 就是手表自己 —— 一个读代码的人会照着这条假线索去查
+            // "为什么连不上"。真正的取址链路在 GalaxyWearApplication.discoverGateway():
+            //   mDNS(2 秒窗口) → Tailscale 段扫描 → 都没有就让用户在设置里手填,
+            //   手填的值进 EncryptedSharedPreferences 的 server_url。
+            // 要再引入编译期默认地址,请先确认它真的会被读,否则就是又立一块假路牌。
+            //
             // SECURITY: SSL certificate pinning hashes. Replace with real SHA-256 pins in production.
             buildConfigField("String", "CERT_PIN_PRIMARY", "\"\"")
             buildConfigField("String", "CERT_PIN_BACKUP", "\"\"")
@@ -74,13 +80,12 @@ android {
         debug {
             isMinifyEnabled = false
             applicationIdSuffix = ".debug"
-            // 调试默认指向模拟器宿主别名 10.0.2.2(= 开发机)，明文 ws 便于本地联调。
-            // 旧默认 wss://localhost 在手表上 localhost 指向手表自身、且本地后端多为明文 → 连不上。
-            // 真机请在设置里改成局域网/Tailscale IP(见 README，如 ws://192.168.1.100:9000)。
-            buildConfigField("String", "GALAXY_SERVER_URL", "\"ws://10.0.2.2:9000\"")
-            // SECURITY-FIX: API_VERSION aligned with Android app (v3.0)
-            buildConfigField("String", "API_VERSION", "\"v3.0\"")
-            buildConfigField("String", "WS_PATH", "\"/ws\"")
+            // 同 release:GALAXY_SERVER_URL / API_VERSION / WS_PATH 没有任何读取方,一并删掉。
+            // 这里原先写着 `ws://10.0.2.2:9000`(模拟器宿主别名),注释还解释了为什么不是
+            // localhost —— 那段解释是对的,但它描述的是一个**没人读的常量**,于是反而成了
+            // 最像真的那块假路牌。
+            // 本地联调的正确做法:让 mDNS 发现开发机,或在设置页手填(模拟器填 ws://10.0.2.2:9000,
+            // 真机填局域网/Tailscale 地址)。
             buildConfigField("String", "CERT_PIN_PRIMARY", "\"\"")
             buildConfigField("String", "CERT_PIN_BACKUP", "\"\"")
         }
@@ -107,6 +112,21 @@ android {
                 "META-INF/versions/**"
             )
         }
+    }
+
+    // 单测里让 android.* 的桩方法返回默认值,而不是抛
+    // "Method w in android.util.Log not mocked"。
+    //
+    // 为什么需要:AIPClient 的 msgpack 编解码是纯函数,但它的 catch 分支写了
+    // Log.w。于是**恰恰是失败路径**(喂坏数据该回 null)在单测里碰不得 ——
+    // 而那正是最值得测的一条。
+    //
+    // 这行**不**许可什么:它只是把日志变成空操作,不会把被测逻辑变成假的。
+    // 任何需要真 Android 行为的断言(Context、SharedPreferences、Looper……)
+    // 在这里只会拿到 0/null/false,那种测试是假绿 —— 要测那些请上
+    // Robolectric 或插桩测试,别靠这行蒙混。
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 
     // Remove unused kotlin.Metadata annotations at build time

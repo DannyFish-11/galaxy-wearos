@@ -178,22 +178,6 @@ class AIPClient(
     // Lifecycle
     // -----------------------------------------------------------------
 
-    /**
-     * Build WebSocket URL with auto-path attachment.
-     * W2-FIX: Unified port 9000 across all configurations.
-     * W13-FIX: If URL has no /ws path, appends /{API_VERSION}/ws/device/{deviceId}.
-     */
-    private fun buildWsUrl(baseUrl: String, devId: String): String {
-        val url = if (baseUrl.endsWith("/")) baseUrl.dropLast(1) else baseUrl
-        return when {
-            url.contains("/ws") -> url  // Already has path, don't modify
-            else -> {
-                // R5-FIX: Use V2 gateway path without API_VERSION prefix
-                "$url/ws/device/$devId"
-            }
-        }
-    }
-
     suspend fun connect(url: String, authToken: String, devId: String) {
         connectMutex.withLock {
             if (isDisposed) {
@@ -1008,139 +992,42 @@ class AIPClient(
         /** P2-FIX: Maximum WebSocket frame size (512KB) to prevent OOM on malicious payloads. */
         const val MAX_MESSAGE_SIZE = 512 * 1024 // 512KB
 
+        // ── 四个纯函数搬去了 AipPureLogic.kt ─────────────────────────────
+        //
+        // 搬的理由只有一个:**它们本来测不了**。AIPClient 的构造要
+        // android.content.Context,而本仓单测工具链只有 JUnit(没有 Robolectric),
+        // 造不出 Context —— 于是 URL 拼接、设备列表解析、msgpack 编解码这四段
+        // 纯粹的字符串/字节逻辑,跟着一个拿不到的对象一起沉在水下,一条测试都没有。
+        //
+        // 函数体逐字未改。唯一的差别是**日志挪到了这里**:纯逻辑文件里不许出现
+        // android.util.Log,否则它就又只能在 Android 环境里跑了。异常信息没有丢,
+        // 靠 onError 回调带出来。
+        //
+        // 下面这四个名字保持原样,所以本类里原有的调用点一行都不用改。
+
+        internal fun buildWsUrl(baseUrl: String, devId: String): String =
+            AipPureLogic.buildWsUrl(baseUrl, devId)
+
+        internal fun parseDeviceList(payload: JsonElement): List<DeviceInfo> =
+            AipPureLogic.parseDeviceList(payload)
+
+        fun unpackMsgpack(data: ByteArray): String? =
+            AipPureLogic.unpackMsgpack(data) { why ->
+                Log.w("AIPClient", "Msgpack unpack failed: $why")
+            }
+
+        fun packMsgpack(json: String): ByteArray? =
+            AipPureLogic.packMsgpack(json) { why ->
+                Log.w("AIPClient", "Msgpack pack failed: $why")
+            }
+
+
         /** Max time to wait for auth_ok after the WS session opens before closing it. */
         const val AUTH_TIMEOUT_MS = 10_000L
 
         /** Cap on the backoff attempt counter; delay is already capped at 30s by attempt 3. */
         private const val MAX_BACKOFF_ATTEMPT = 8
 
-        // C4: Dedicated Json instance for companion object (was referencing instance variable)
-        private val companionJson = Json {
-            ignoreUnknownKeys = true
-            isLenient = true
-        }
-
-        /**
-         * C4: Unpack a MessagePack byte array into a JSON string.
-         * Uses recursive Value-to-JsonElement conversion for reliable JSON output.
-         * Returns null if unpacking fails (caller falls back to JSON).
-         */
-        fun unpackMsgpack(data: ByteArray): String? {
-            val unpacker = org.msgpack.core.MessagePack.newDefaultUnpacker(data)
-            return try {
-                val value = unpacker.unpackValue()
-                // C4: Convert MessagePack Value to kotlinx JsonElement recursively
-                val jsonElement = msgpackValueToJsonElement(value)
-                companionJson.encodeToString(JsonElement.serializer(), jsonElement)
-            } catch (e: Exception) {
-                Log.w("AIPClient", "Msgpack unpack failed: ${e.message}")
-                null
-            } finally {
-                runCatching { unpacker.close() }
-            }
-        }
-
-        /**
-         * C4: Recursively convert MessagePack Value to kotlinx.serialization JsonElement.
-         * This ensures proper JSON type mapping (not just toString).
-         */
-        private fun msgpackValueToJsonElement(
-            value: org.msgpack.value.Value
-        ): JsonElement {
-            return when {
-                value.isNilValue -> JsonNull
-                value.isBooleanValue -> JsonPrimitive(value.asBooleanValue().boolean)
-                value.isIntegerValue -> {
-                    val intVal = value.asIntegerValue()
-                    when {
-                        intVal.isInLongRange -> JsonPrimitive(intVal.toLong())
-                        else -> JsonPrimitive(intVal.toBigInteger().toString())
-                    }
-                }
-                value.isFloatValue -> JsonPrimitive(value.asFloatValue().toDouble())
-                value.isStringValue -> JsonPrimitive(value.asStringValue().asString())
-                value.isBinaryValue -> {
-                    // Encode binary as Base64 string
-                    val bytes = value.asBinaryValue().asByteArray()
-                    JsonPrimitive(java.util.Base64.getEncoder().encodeToString(bytes))
-                }
-                value.isArrayValue -> {
-                    val array = value.asArrayValue()
-                    JsonArray(array.map { msgpackValueToJsonElement(it) })
-                }
-                value.isMapValue -> {
-                    val map = value.asMapValue().map()
-                    JsonObject(map.mapKeys {
-                        // CRITICAL-FIX: Handle non-string keys gracefully — if key is not
-                        // a string (e.g., integer key), fall back to toString() instead
-                        // of letting asStringValue() throw MessageTypeCastException.
-                        try { it.key.asStringValue().asString() }
-                        catch (_: Exception) { it.key.toString() }
-                    }.mapValues { msgpackValueToJsonElement(it.value) })
-                }
-                value.isExtensionValue -> {
-                    // Handle extension types as JSON object with type and data
-                    val ext = value.asExtensionValue()
-                    buildJsonObject {
-                        put("ext_type", ext.type)
-                        put("data", java.util.Base64.getEncoder().encodeToString(ext.data))
-                    }
-                }
-                else -> JsonPrimitive(value.toString())
-            }
-        }
-
-        /**
-         * C4: Pack a JSON string into a MessagePack byte array.
-         * Returns null if packing fails (caller falls back to JSON).
-         */
-        fun packMsgpack(json: String): ByteArray? {
-            return try {
-                val parsed = companionJson.parseToJsonElement(json)
-                val packer = org.msgpack.core.MessagePack.newDefaultBufferPacker()
-                try {
-                    packJsonElement(packer, parsed)
-                    packer.toByteArray()
-                } finally {
-                    runCatching { packer.close() }
-                }
-            } catch (e: Exception) {
-                Log.w("AIPClient", "Msgpack pack failed: ${e.message}")
-                null
-            }
-        }
-
-        private fun packJsonElement(packer: org.msgpack.core.MessagePacker, element: JsonElement) {
-            when (element) {
-                is JsonObject -> {
-                    packer.packMapHeader(element.size)
-                    element.forEach { (key, value) ->
-                        packer.packString(key)
-                        packJsonElement(packer, value)
-                    }
-                }
-                is JsonArray -> {
-                    packer.packArrayHeader(element.size)
-                    element.forEach { packJsonElement(packer, it) }
-                }
-                is JsonPrimitive -> {
-                    val primitive = element
-                    when {
-                        primitive.isString -> packer.packString(primitive.content)
-                        primitive.content == "true" -> packer.packBoolean(true)
-                        primitive.content == "false" -> packer.packBoolean(false)
-                        primitive.content == "null" -> packer.packNil()
-                        else -> {
-                            // Try int first, then float
-                            primitive.content.toLongOrNull()?.let { packer.packLong(it) }
-                                ?: primitive.content.toDoubleOrNull()?.let { packer.packDouble(it) }
-                                ?: packer.packString(primitive.content)
-                        }
-                    }
-                }
-                JsonNull -> packer.packNil()
-            }
-        }
     }
 
     /**
@@ -1162,24 +1049,8 @@ class AIPClient(
     /**
      * DEVICE: 解析设备列表响应。
      */
-    fun parseDeviceList(payload: JsonElement): List<DeviceInfo> {
-        return try {
-            val array = payload.jsonArray
-            array.map { element ->
-                val obj = element.jsonObject
-                DeviceInfo(
-                    deviceId = obj["device_id"]?.jsonPrimitive?.content ?: "unknown",
-                    displayName = obj["display_name"]?.jsonPrimitive?.content ?: "Unknown Device",
-                    deviceType = obj["device_type"]?.jsonPrimitive?.content ?: "unknown",
-                    status = obj["status"]?.jsonPrimitive?.content ?: "unknown",
-                    capabilities = obj["capabilities"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList(),
-                    lastSeen = obj["last_seen"]?.jsonPrimitive?.long ?: System.currentTimeMillis(),
-                )
-            }
-        } catch (e: Exception) {
-            emptyList()
-        }
-    }
+    fun parseDeviceList(payload: JsonElement): List<DeviceInfo> =
+        Companion.parseDeviceList(payload)
 
     /**
      * 暴露 deviceId 给 DevicesScreen 使用。
@@ -1191,16 +1062,8 @@ class AIPClient(
 // Data types
 // -----------------------------------------------------------------
 
-enum class AIPConnectionState {
-    DISCONNECTED,
-    CONNECTING,
-    CONNECTED,
-    AUTHENTICATED,
-    ERROR;
-
-    val isTerminal: Boolean
-        get() = this == DISCONNECTED || this == ERROR
-}
+// AIPConnectionState 搬去了 AIPConnectionState.kt —— 它不碰 Android，
+// 单独一个文件才测得到（理由同 AipPureLogic.kt）。
 
 // X-DATA-CR1 → PR-SHARED-ENVELOPE: 本地信封已删除。canonical 信封是
 // shared-protocol 的 com.ufo.galaxy.shared.protocol.AipMessage(Android 与 Wear

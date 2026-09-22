@@ -94,8 +94,21 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # 这里原先是 `android-actions/setup-android@v3`,而它默认会去装 `tools` 这个包 ——
+      # `tools` 早就从 Android SDK 仓库下架了,于是:
+      #
+      #     [command] .../cmdline-tools/16.0/bin/sdkmanager tools
+      #     Warning: Failed to find package 'tools'
+      #     Error: The process '.../sdkmanager' failed with exit code 1
+      #
+      # 这不是偶发,是确定性的:每次跑都这样。后果比"红"更糟 —— 它挂在 SDK 这一步,
+      # 后面 assembleDebug / testDebugUnitTest 全被 skip,**代码一行没编、测试一条没跑**,
+      # 而 main 从 2026-09-20 合并起就一直处于"没人验过"的状态。
+      #
+      # 不修 action、不传 packages 参数,直接删掉这一步:ubuntu runner 镜像本来就自带
+      # Android SDK(上面那行报错里的路径就是镜像里的),兄弟仓 ufo-galaxy-android 的 CI
+      # 从来没用过这个 action,一直是直接 ./gradlew ——同样的 compileSdk 35,一直是绿的。
+      # 少一个上游依赖,就少一处会替我们决定"今天能不能编译"的东西。
 
       - name: Gradle cache
         uses: actions/cache@v4
