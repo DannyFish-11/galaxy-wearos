@@ -610,6 +610,11 @@ class AIPClient(
                     val conversationId = json["conversation_id"]?.jsonPrimitive?.contentOrNull
                         ?: (json["payload"] as? JsonObject)?.get("conversation_id")?.jsonPrimitive?.contentOrNull
                         ?: ""
+                    // 标题原先在这里被丢掉了:下游通知读 payload["title"],而这里重新拼的
+                    // payload 里没有它 —— 智能体给的标题永远显示不出来。
+                    val title = json["title"]?.jsonPrimitive?.contentOrNull
+                        ?: (json["payload"] as? JsonObject)?.get("title")?.jsonPrimitive?.contentOrNull
+                        ?: ""
                     // 用服务端给的 message_id 去重:断线补发才不会记成两条、弹两次通知。
                     val serverId = json["message_id"]?.jsonPrimitive?.contentOrNull ?: ""
                     val recorded = conversationRecorder?.recordAgentMessage(
@@ -623,6 +628,7 @@ class AIPClient(
                             type = MsgType.AGENT_MESSAGE,
                             payload = buildJsonObject {
                                 put("text", recorded.text)
+                                put("title", title)
                                 put("conversation_id", recorded.conversationId)
                                 put("message_id", recorded.id)
                             },
