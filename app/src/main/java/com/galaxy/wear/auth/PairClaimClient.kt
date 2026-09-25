@@ -66,6 +66,14 @@ class PairClaimClient(private val context: Context) {
     /** 一条候选路径。[priority] 从 1 起连续编号，设备端按它依次试。 */
     data class Candidate(val kind: String, val url: String, val priority: Int)
 
+    /**
+     * 进 tailnet 的配置:往哪个 headscale 登记,以及(首次加入前)那把一次性钥匙。
+     *
+     * 钥匙用掉就删([clearTailnetAuthKey]):之后手表凭自己的节点身份重连,
+     * 留着一把已作废的钥匙只会在排障时误导人。
+     */
+    data class TailnetJoin(val controlUrl: String, val pendingAuthKey: String?)
+
     /** 接纳结果。[ok] 为 true 时 [token] 非空。 */
     data class ClaimResult(
         val ok: Boolean,
@@ -74,6 +82,10 @@ class PairClaimClient(private val context: Context) {
         val gatewayDeviceId: String? = null,
         val scopes: List<String> = emptyList(),
         val error: String? = null,
+        /** 网关给了进 tailnet 的钥匙 —— 出门直连可用。 */
+        val tailnetJoin: TailnetJoin? = null,
+        /** 网关没给钥匙的原因(比如没配 headscale)。在家的局域网直连不受影响。 */
+        val tailnetUnavailableReason: String? = null,
     )
 
     private val jsonFormat = Json {
@@ -166,7 +178,15 @@ class PairClaimClient(private val context: Context) {
                 ?: return ClaimResult(ok = false, error = "no_token_issued")
 
             val candidates = parseCandidates(body["candidates"] as? JsonArray)
+            val tailnet = (body["tailnet_join"] as? JsonObject)?.let { tj ->
+                val url = tj["control_url"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                val key = tj["auth_key"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                if (url.isBlank() || key.isBlank()) null else TailnetJoin(url, key)
+            }
+            val tailnetWhyNot = (body["tailnet_join_unavailable"] as? JsonObject)
+                ?.get("reason")?.jsonPrimitive?.contentOrNull
             persist(token, candidates)
+            persistTailnet(tailnet)
 
             ClaimResult(
                 ok = true,
@@ -176,6 +196,8 @@ class PairClaimClient(private val context: Context) {
                 scopes = (body["token_scopes"] as? JsonArray)
                     ?.mapNotNull { it.jsonPrimitive.contentOrNull }
                     ?: emptyList(),
+                tailnetJoin = tailnet,
+                tailnetUnavailableReason = tailnetWhyNot,
             )
         } catch (e: CancellationException) {
             throw e
@@ -208,6 +230,45 @@ class PairClaimClient(private val context: Context) {
     /** 记住这次是哪条路通的 —— 下次先试它，省掉整轮试探。 */
     fun rememberGoodKind(kind: String) {
         plainPrefs.edit().putString(KEY_LAST_GOOD, kind).apply()
+    }
+
+    /** 进 tailnet 的配置;从没拿到过返回 null。 */
+    fun storedTailnetJoin(): TailnetJoin? {
+        val url = plainPrefs.getString(KEY_TAILNET_CONTROL_URL, null)?.takeIf { it.isNotBlank() } ?: return null
+        val key = encryptedPrefs.getString(KEY_TAILNET_AUTH_KEY, null)?.takeIf { it.isNotBlank() }
+        return TailnetJoin(url, key)
+    }
+
+    /** 钥匙已经用掉(手表已加入 tailnet)。 */
+    fun clearTailnetAuthKey() {
+        encryptedPrefs.edit().remove(KEY_TAILNET_AUTH_KEY).apply()
+    }
+
+    /**
+     * 回环转发口。首次随机选、之后固定 —— 转发地址在子进程重启后不变,
+     * AIPClient 自己的重连循环才不会拨一个已经换掉的端口。
+     */
+    fun tailnetListenPort(pick: () -> Int): Int {
+        val cur = plainPrefs.getInt(KEY_TAILNET_LISTEN_PORT, 0)
+        if (cur > 0) return cur
+        val p = pick()
+        plainPrefs.edit().putInt(KEY_TAILNET_LISTEN_PORT, p).apply()
+        return p
+    }
+
+    /**
+     * 每次配对都以网关这一次的回答为准:给了钥匙就换上;没给就清掉旧的 ——
+     * 换了一台没配 headscale 的网关,留着旧 headscale 的配置只会让手表去登记一个
+     * 不相干的控制服务器。
+     */
+    private fun persistTailnet(join: TailnetJoin?) {
+        if (join == null) {
+            plainPrefs.edit().remove(KEY_TAILNET_CONTROL_URL).apply()
+            encryptedPrefs.edit().remove(KEY_TAILNET_AUTH_KEY).apply()
+            return
+        }
+        plainPrefs.edit().putString(KEY_TAILNET_CONTROL_URL, join.controlUrl).apply()
+        encryptedPrefs.edit().putString(KEY_TAILNET_AUTH_KEY, join.pendingAuthKey.orEmpty()).apply()
     }
 
     private fun persist(token: String, candidates: List<Candidate>) {
@@ -268,6 +329,11 @@ class PairClaimClient(private val context: Context) {
         const val KEY_GATEWAY_TOKEN = "gateway_token"
         const val KEY_CANDIDATES = "gateway_candidates_json"
         const val KEY_LAST_GOOD = "last_good_candidate_kind"
+        const val KEY_TAILNET_CONTROL_URL = "tailnet_control_url"
+        const val KEY_TAILNET_LISTEN_PORT = "tailnet_listen_port"
+
+        /** 一次性钥匙等价于"能以一台新设备的身份进你的 tailnet",进加密存储。 */
+        const val KEY_TAILNET_AUTH_KEY = "tailnet_auth_key"
         private const val HTTP_TOO_MANY_REQUESTS = 429
     }
 }

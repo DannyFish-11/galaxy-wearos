@@ -95,6 +95,13 @@ android {
     // APK 里用不到,统一丢弃即可(assembleDebug 才走到这步,compileDebugKotlin 看不到)。
     // (netty 那两条原先是给 HiveMQ 带进来的 Netty 用的;HiveMQ 已删,留着无害。)
     packaging {
+        // 手表进 tailnet 的那个进程(libgalaxytailnet.so)是**可执行文件**,要从
+        // nativeLibraryDir 起。AGP 4.2 起默认不解压原生库(留在 APK 里按偏移映射),
+        // nativeLibraryDir 里就没有真实文件可执行。打开它 = extractNativeLibs=true,
+        // 安装时解压到只读且允许执行的目录(与安卓仓 llama-server 同一个坑、同一个解法)。
+        jniLibs {
+            useLegacyPackaging = true
+        }
         resources {
             excludes += setOf(
                 "META-INF/INDEX.LIST",
@@ -137,6 +144,43 @@ android {
         }
     }
 }
+
+// ── 手表自己进 tailnet 的那个进程(本仓 tailnet/,Go)────────────────────────────
+//
+// 为什么要编一个 Go 程序进 APK:Wear OS 把 VPN 授权做成了桩,装不了 Tailscale。
+// tailnet/ 用 tsnet 以用户态加入 tailnet(不需要 VPN 授权),在回环口上转发到网关。
+// 出门在外、只带手表时,这是直连电脑的那条路。详见 tailnet/main.go 顶部。
+//
+// 只编 arm64-v8a:手表侧只支持 64 位(所有者决定;32 位 ARM 要 cgo + NDK 才能编)。
+// 名字必须是 lib*.so,安装器才会把它解压进 nativeLibraryDir。
+//
+// 需要 Go(版本见 tailnet/go.mod;GOTOOLCHAIN=auto 时会自动取对应工具链)。
+// 没有 Go 就**构建失败并说明原因** —— 不静默跳过:跳过的结果是一个"出门连不上"
+// 的 APK,而没人知道是少了这个文件。
+val tailnetSrc = rootProject.file("tailnet")
+val tailnetJniDir = layout.buildDirectory.dir("generated/tailnet/jniLibs")
+val buildTailnet by tasks.registering(Exec::class) {
+    description = "把 tailnet/ 编成 arm64 Android 可执行文件,打进 jniLibs"
+    inputs.files(fileTree(tailnetSrc) { include("*.go", "go.mod", "go.sum") })
+    val out = tailnetJniDir.map { it.file("arm64-v8a/libgalaxytailnet.so") }
+    outputs.file(out)
+    workingDir = tailnetSrc
+    environment("GOOS", "android")
+    environment("GOARCH", "arm64")
+    environment("CGO_ENABLED", "0")
+    commandLine("go", "build", "-trimpath", "-ldflags=-s -w", "-o", out.get().asFile.absolutePath, ".")
+    doFirst {
+        val ok = runCatching { ProcessBuilder("go", "version").start().waitFor() == 0 }.getOrDefault(false)
+        if (!ok) {
+            throw GradleException(
+                "构建手表 APK 需要 Go(tailnet/ 是出门直连用的 tailnet 进程)。" +
+                    "请安装 Go 并确保 `go` 在 PATH 里,版本见 tailnet/go.mod。"
+            )
+        }
+    }
+}
+android.sourceSets.getByName("main").jniLibs.srcDir(tailnetJniDir.get().asFile)
+tasks.named("preBuild") { dependsOn(buildTailnet) }
 
 dependencies {
     // PR-SHARED-TRANSPORT: Reuse shared transport module from Android project

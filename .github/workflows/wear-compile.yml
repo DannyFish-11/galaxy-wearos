@@ -110,6 +110,23 @@ jobs:
       # 从来没用过这个 action,一直是直接 ./gradlew ——同样的 compileSdk 35,一直是绿的。
       # 少一个上游依赖,就少一处会替我们决定"今天能不能编译"的东西。
 
+      # 手表 APK 里要编进一个 Go 程序(tailnet/:出门直连用的用户态 tailnet 进程),
+      # 构建由 app/build.gradle.kts 的 buildTailnet 任务触发。版本跟 tailnet/go.mod 走。
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: galaxy-wearos/tailnet/go.mod
+          cache-dependency-path: galaxy-wearos/tailnet/go.sum
+
+      # Go 这一半的单测(参数校验、转发、网络命令解析)。真 headscale 的端到端
+      # 在 tailnet/e2e/run.sh,需要 headscale 可执行文件,本地跑。
+      - name: tailnet (Go) — vet + unit tests
+        working-directory: galaxy-wearos/tailnet
+        run: |
+          test -z "$(gofmt -l .)" || { echo "gofmt 未通过:"; gofmt -l .; exit 1; }
+          go vet ./...
+          go test ./...
+
       - name: Gradle cache
         uses: actions/cache@v4
         with:
@@ -128,6 +145,16 @@ jobs:
         # "测试只编译、从不运行"的门放过了上百处真实失败(含多个真生产 bug)。
         # 测试必须真跑,红了就修,不留只编不跑的假绿。
         run: ./gradlew :app:assembleDebug :app:testDebugUnitTest --no-daemon
+
+      # tailnet 进程必须真的进了 APK、在 arm64-v8a 下、名字对 —— 否则装上去出门就连不上,
+      # 而 App 只会报"本机 ABI 没有打包"。
+      - name: APK 里有 tailnet 进程
+        working-directory: galaxy-wearos
+        run: |
+          APK=$(ls app/build/outputs/apk/debug/*.apk | head -1)
+          unzip -l "$APK" | grep -q "lib/arm64-v8a/libgalaxytailnet.so" \
+            || { echo "APK 里没有 lib/arm64-v8a/libgalaxytailnet.so"; unzip -l "$APK" | grep "lib/" ; exit 1; }
+          echo "✅ $(unzip -l "$APK" | grep libgalaxytailnet.so)"
 
       - name: Upload unit test reports
         if: always()
