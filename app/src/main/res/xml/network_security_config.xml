@@ -2,24 +2,27 @@
 <!--
   Network Security Configuration for Galaxy Wear OS.
 
-  Base config denies cleartext traffic by default.
-  Only specific debug/local domains are whitelisted for cleartext.
-  All remote traffic must use TLS (https/wss).
+  明文放行的规则**不在这里**，在 shared-protocol 的 CleartextPolicy（与手机同一份）。
+  ================================================================
+  设备间只走内网：同一个 Wi-Fi 直连，或者 tailnet。这两条路上网关默认说的是明文
+  ws://（局域网是家里的信任边界；tailnet 由 WireGuard 加密；wss 到裸 IP 拿不到
+  可信证书）。
+
+  但这份 XML 只能按域名 / 单个 IP 放行明文，**不认网段**。这里原先是"禁明文 + 写死
+  10.0.2.2 / 10.0.0.1 / 100.64.0.1 / localhost 放行"，release 版还整份换成一份全禁
+  明文的配置。结果：release 版手表连任何内网地址都不通；debug 版也只有恰好是那几个
+  IP 时才通 —— 家里真实的 192.168.x.x、tailnet 里按加入顺序分配的 100.x.y.z 全被拦。
+
+  所以：这里放开明文；"只许对内网地址说明文"改由 CleartextPolicy 按网段判，接在
+  两处：ConnectionPathPlanner.planAttempts（自动发现 / 配对下发的候选）和
+  AIPClient.connect（设置页手填的地址）。要拿明文去连公网地址，根本不会被拨出去。
+
+  release 与 debug 只用这一份 —— 不要再用 resValue 换成另一份。
 -->
 <network-security-config>
-    <!-- Base: deny cleartext for all traffic by default -->
-    <base-config cleartextTrafficPermitted="false">
+    <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system"/>
         </trust-anchors>
     </base-config>
-
-    <!-- Debug/Local network only: permissive for development environments -->
-    <!-- NOTE: These domains should be restricted or removed in production releases -->
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">10.0.2.2</domain>  <!-- Android emulator localhost -->
-        <domain includeSubdomains="false">10.0.0.1</domain>  <!-- Local network gateway -->
-        <domain includeSubdomains="false">100.64.0.1</domain><!-- Tailscale/WireGuard CGNAT -->
-        <domain includeSubdomains="false">localhost</domain> <!-- Local dev server -->
-    </domain-config>
 </network-security-config>

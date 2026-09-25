@@ -94,8 +94,38 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # 这里原先是 `android-actions/setup-android@v3`,而它默认会去装 `tools` 这个包 ——
+      # `tools` 早就从 Android SDK 仓库下架了,于是:
+      #
+      #     [command] .../cmdline-tools/16.0/bin/sdkmanager tools
+      #     Warning: Failed to find package 'tools'
+      #     Error: The process '.../sdkmanager' failed with exit code 1
+      #
+      # 这不是偶发,是确定性的:每次跑都这样。后果比"红"更糟 —— 它挂在 SDK 这一步,
+      # 后面 assembleDebug / testDebugUnitTest 全被 skip,**代码一行没编、测试一条没跑**,
+      # 而 main 从 2026-09-20 合并起就一直处于"没人验过"的状态。
+      #
+      # 不修 action、不传 packages 参数,直接删掉这一步:ubuntu runner 镜像本来就自带
+      # Android SDK(上面那行报错里的路径就是镜像里的),兄弟仓 ufo-galaxy-android 的 CI
+      # 从来没用过这个 action,一直是直接 ./gradlew ——同样的 compileSdk 35,一直是绿的。
+      # 少一个上游依赖,就少一处会替我们决定"今天能不能编译"的东西。
+
+      # 手表 APK 里要编进一个 Go 程序(tailnet/:出门直连用的用户态 tailnet 进程),
+      # 构建由 app/build.gradle.kts 的 buildTailnet 任务触发。版本跟 tailnet/go.mod 走。
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: galaxy-wearos/tailnet/go.mod
+          cache-dependency-path: galaxy-wearos/tailnet/go.sum
+
+      # Go 这一半的单测(参数校验、转发、网络命令解析)。真 headscale 的端到端
+      # 在 tailnet/e2e/run.sh,需要 headscale 可执行文件,本地跑。
+      - name: tailnet (Go) — vet + unit tests
+        working-directory: galaxy-wearos/tailnet
+        run: |
+          test -z "$(gofmt -l .)" || { echo "gofmt 未通过:"; gofmt -l .; exit 1; }
+          go vet ./...
+          go test ./...
 
       - name: Gradle cache
         uses: actions/cache@v4
@@ -115,6 +145,16 @@ jobs:
         # "测试只编译、从不运行"的门放过了上百处真实失败(含多个真生产 bug)。
         # 测试必须真跑,红了就修,不留只编不跑的假绿。
         run: ./gradlew :app:assembleDebug :app:testDebugUnitTest --no-daemon
+
+      # tailnet 进程必须真的进了 APK、在 arm64-v8a 下、名字对 —— 否则装上去出门就连不上,
+      # 而 App 只会报"本机 ABI 没有打包"。
+      - name: APK 里有 tailnet 进程
+        working-directory: galaxy-wearos
+        run: |
+          APK=$(ls app/build/outputs/apk/debug/*.apk | head -1)
+          unzip -l "$APK" | grep -q "lib/arm64-v8a/libgalaxytailnet.so" \
+            || { echo "APK 里没有 lib/arm64-v8a/libgalaxytailnet.so"; unzip -l "$APK" | grep "lib/" ; exit 1; }
+          echo "✅ $(unzip -l "$APK" | grep libgalaxytailnet.so)"
 
       - name: Upload unit test reports
         if: always()

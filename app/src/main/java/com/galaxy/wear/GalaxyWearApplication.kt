@@ -159,8 +159,50 @@ class GalaxyWearApplication : Application() {
     /** 下一次重连该用第几条候选。连上之后由 [rememberWorkingPath] 归位。 */
     private var candidateCursor = 0
 
-    /** 最近一次实际拨出去的地址 —— 连上之后用它反查"这次是哪条路通的"。 */
+    /**
+     * 最近一次试的那条**候选**的原始地址 —— 连上之后用它反查"这次是哪条路通的"。
+     *
+     * 注意不是实际拨出去的地址:tailnet 那条实际拨的是本机转发口
+     * (ws://127.0.0.1:<端口>/…),拿它去候选表里是查不到的。
+     */
     private var lastAttemptedUrl: String? = null
+
+    /**
+     * 手表自己进 tailnet 的那个子进程 —— 出门在外、只带手表时**直连**电脑的路。
+     * 见 [com.galaxy.wear.network.TailnetDaemon]。
+     */
+    private val tailnetDaemon by lazy { com.galaxy.wear.network.TailnetDaemon(this, appScope) }
+
+    /** tailnet 转发的当前状态,给设置页看。 */
+    val tailnetState get() = tailnetDaemon.state
+
+    /**
+     * 配过 tailnet(配对时网关给过 headscale 地址)且候选里有 tailnet 那条,就把转发
+     * 进程拉起来;否则停掉。重复调用无害。
+     */
+    fun ensureTailnet() {
+        val join = pairClaimClient.storedTailnetJoin()
+        val target = pairClaimClient.storedCandidates()
+            .firstNotNullOfOrNull { com.galaxy.wear.network.TailnetProtocol.targetOf(it.url) }
+        if (join == null || target == null) {
+            tailnetDaemon.stop()
+            return
+        }
+        tailnetDaemon.onJoined = { pairClaimClient.clearTailnetAuthKey() }
+        tailnetDaemon.ensureRunning(
+            com.galaxy.wear.network.TailnetDaemon.Spec(
+                controlUrl = join.controlUrl,
+                target = target,
+                hostname = com.galaxy.wear.network.TailnetProtocol.hostnameFor(
+                    DeviceIdProvider.getOrCreateDeviceId(this)
+                ),
+                listenPort = pairClaimClient.tailnetListenPort {
+                    com.galaxy.wear.network.TailnetProtocol.pickListenPort()
+                },
+                authKey = join.pendingAuthKey,
+            )
+        )
+    }
 
     /**
      * 这一轮重连该连哪个地址。
@@ -178,6 +220,7 @@ class GalaxyWearApplication : Application() {
      * 没配过对、或网关没给候选（老版本）→ 退回 [fallback] 那个单地址。
      */
     private fun nextConnectUrl(fallback: String): String {
+        lastAttemptedUrl = fallback
         val stored = pairClaimClient.storedCandidates()
         if (stored.isEmpty()) return fallback
         val ordered = com.ufo.galaxy.shared.protocol.ConnectionPathPlanner.planAttempts(
@@ -187,10 +230,20 @@ class GalaxyWearApplication : Application() {
             pairClaimClient.lastGoodKind(),
         )
         if (ordered.isEmpty()) return fallback
-        val pick = ordered[candidateCursor % ordered.size]
-        candidateCursor = (candidateCursor + 1) % ordered.size
-        Log.i(TAG, "Reconnect will try candidate kind=${pick.kind}")
-        return pick.url
+        // tailnet 那条要经本机的转发进程;进程没就绪时跳过它,而不是去拨一个
+        // 手表根本到不了的 100.x(手表没有 VPN)白等超时。
+        val ready = tailnetDaemon.state.value as? com.galaxy.wear.network.TailnetDaemon.State.Ready
+        repeat(ordered.size) {
+            val pick = ordered[candidateCursor % ordered.size]
+            candidateCursor = (candidateCursor + 1) % ordered.size
+            val dial = com.galaxy.wear.network.TailnetProtocol.dialUrlFor(pick.url, ready?.listen, ready?.target)
+            if (dial != null) {
+                Log.i(TAG, "Reconnect will try candidate kind=${pick.kind}")
+                lastAttemptedUrl = pick.url
+                return dial
+            }
+        }
+        return fallback
     }
 
     /**
@@ -380,8 +433,9 @@ class GalaxyWearApplication : Application() {
                                     // 每次重连换一条候选，而不是在同一条上重试到死 ——
                                     // 后者正是"出门就连不上"的形状：局域网那条在外面
                                     // 永远超时，重试多少次都一样。
+                                    // nextConnectUrl 自己记下 lastAttemptedUrl(候选的原始地址,
+                                    // 不是经转发改写后的那个)。
                                     val target = nextConnectUrl(savedUrl)
-                                    lastAttemptedUrl = target
                                     // 此处位于 appScope.launch 内,裸 this 指向 CoroutineScope;
                                     // getOrCreateDeviceId 需要 Context,故显式限定为 Application。
                                     aipClient.connect(target, savedToken, DeviceIdProvider.getOrCreateDeviceId(this@GalaxyWearApplication))
@@ -402,6 +456,24 @@ class GalaxyWearApplication : Application() {
             networkCallback?.let { cm.registerDefaultNetworkCallback(it) }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to register network callback: ${e.message}")
+        }
+
+        // 出门直连:配过 tailnet 就把转发进程拉起来;它一就绪,若此刻没连着就立刻重连一次
+        // (而不是等下一次网络变化 —— 在外面网络可能很久都不变)。
+        ensureTailnet()
+        appScope.launch {
+            tailnetDaemon.state.collect { st ->
+                if (st is com.galaxy.wear.network.TailnetDaemon.State.Ready &&
+                    _connectionState.value.isTerminal
+                ) {
+                    val savedUrl = encryptedPrefs.getString(KEY_SERVER_URL, "") ?: ""
+                    val savedToken = encryptedPrefs.getString(KEY_AUTH_TOKEN, "") ?: ""
+                    if (savedUrl.isNotEmpty() && savedToken.isNotEmpty() && isAipClientReady()) {
+                        Log.i(TAG, "tailnet 就绪且当前未连接 —— 立刻重连")
+                        connect(nextConnectUrl(savedUrl), savedToken)
+                    }
+                }
+            }
         }
 
         // LIQUID-ISLAND: 收集灵动岛消息
@@ -795,6 +867,8 @@ class GalaxyWearApplication : Application() {
             Log.w(TAG, "loginWithToken skipped — blank serverUrl or token")
             return
         }
+        // 刚配完对:网关这次可能给了进 tailnet 的钥匙(或者换了网关、没给)—— 按最新的来。
+        ensureTailnet()
         try {
             encryptedPrefs.edit()
                 .putString(KEY_SERVER_URL, serverUrl)
@@ -887,12 +961,20 @@ class GalaxyWearApplication : Application() {
     fun getNetworkStatus(): String {
         // WARNING-9: Reuse cached discovery instances.
         val wifi = isWifiAvailable(this)
-        val ts = tailscaleAdapter.isInTailscaleNetwork()
-        val tsIp = tailscaleAdapter.getLocalTailscaleIp()
+        // 手表进 tailnet 靠的是 App 里的转发进程,不是系统 VPN —— 系统网卡上永远看不到
+        // 100.x 地址,所以这里读转发进程的状态,而不是去枚举网卡。
+        val tailnet = when (val st = tailnetDaemon.state.value) {
+            is com.galaxy.wear.network.TailnetDaemon.State.Ready -> "tailnet ${st.tailnetIp}"
+            com.galaxy.wear.network.TailnetDaemon.State.Starting -> "tailnet 连接中"
+            com.galaxy.wear.network.TailnetDaemon.State.NeedsLogin -> "tailnet 需重新配对"
+            is com.galaxy.wear.network.TailnetDaemon.State.Failed -> "tailnet 失败:${st.message.take(40)}"
+            is com.galaxy.wear.network.TailnetDaemon.State.Unavailable -> null
+            com.galaxy.wear.network.TailnetDaemon.State.Off -> null
+        }
         return when {
-            wifi && ts -> "Wi-Fi + Tailscale ($tsIp)"
+            wifi && tailnet != null -> "Wi-Fi + $tailnet"
             wifi -> "Wi-Fi"
-            ts -> "Tailscale ($tsIp)"
+            tailnet != null -> tailnet
             else -> "No network"
         }
     }

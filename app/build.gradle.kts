@@ -61,36 +61,47 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            buildConfigField("String", "GALAXY_SERVER_URL", "\"wss://localhost:9000\"")
-            // SECURITY-FIX: API_VERSION aligned with Android app (v3.0)
-            buildConfigField("String", "API_VERSION", "\"v3.0\"")
-            buildConfigField("String", "WS_PATH", "\"/ws\"")
-            // SECURITY: SSL certificate pinning hashes. Replace with real SHA-256 pins in production.
-            buildConfigField("String", "CERT_PIN_PRIMARY", "\"\"")
-            buildConfigField("String", "CERT_PIN_BACKUP", "\"\"")
-            // B4-FIX: release builds use strict network_security_config without cleartext whitelist
-            resValue("xml", "network_security_config", "@xml/network_security_config_release")
+            // GALAXY_SERVER_URL / API_VERSION / WS_PATH 三个字段删掉了 —— **没有任何代码读它们**
+            // (实测:全仓 BuildConfig.GALAXY_SERVER_URL / .API_VERSION / .WS_PATH 各 0 次引用)。
+            //
+            // 留着比删掉更坏:它们让人以为 release 版会去连 `wss://localhost:9000`,
+            // 而手表上 localhost 就是手表自己 —— 一个读代码的人会照着这条假线索去查
+            // "为什么连不上"。真正的取址链路在 GalaxyWearApplication.discoverGateway():
+            //   mDNS(2 秒窗口) → Tailscale 段扫描 → 都没有就让用户在设置里手填,
+            //   手填的值进 EncryptedSharedPreferences 的 server_url。
+            // 要再引入编译期默认地址,请先确认它真的会被读,否则就是又立一块假路牌。
+            //
+            // 这里原先还有两样东西,一并删掉:
+            //  * CERT_PIN_PRIMARY / BACKUP —— 值是空串,AIPClient 见空就跳过固定;钉的域名
+            //    "galaxy.ufo.ai" 本系统也从不连。
+            //  * resValue 把 network_security_config 换成一份"全禁明文"的 release 版 ——
+            //    而设备间只走内网、网关默认说明文 ws://,于是 release 版手表**任何内网
+            //    地址都连不上**。现在只有一份配置,"明文只许对内网"由 CleartextPolicy 判。
         }
         debug {
             isMinifyEnabled = false
             applicationIdSuffix = ".debug"
-            // 调试默认指向模拟器宿主别名 10.0.2.2(= 开发机)，明文 ws 便于本地联调。
-            // 旧默认 wss://localhost 在手表上 localhost 指向手表自身、且本地后端多为明文 → 连不上。
-            // 真机请在设置里改成局域网/Tailscale IP(见 README，如 ws://192.168.1.100:9000)。
-            buildConfigField("String", "GALAXY_SERVER_URL", "\"ws://10.0.2.2:9000\"")
-            // SECURITY-FIX: API_VERSION aligned with Android app (v3.0)
-            buildConfigField("String", "API_VERSION", "\"v3.0\"")
-            buildConfigField("String", "WS_PATH", "\"/ws\"")
-            buildConfigField("String", "CERT_PIN_PRIMARY", "\"\"")
-            buildConfigField("String", "CERT_PIN_BACKUP", "\"\"")
+            // 同 release:GALAXY_SERVER_URL / API_VERSION / WS_PATH 没有任何读取方,一并删掉。
+            // 这里原先写着 `ws://10.0.2.2:9000`(模拟器宿主别名),注释还解释了为什么不是
+            // localhost —— 那段解释是对的,但它描述的是一个**没人读的常量**,于是反而成了
+            // 最像真的那块假路牌。
+            // 本地联调的正确做法:让 mDNS 发现开发机,或在设置页手填(模拟器填 ws://10.0.2.2:9000,
+            // 真机填局域网/Tailscale 地址)。
         }
     }
 
-    // HiveMQ MQTT client 传递性引入 Netty,多个 netty-*.jar 各自带一份
-    // META-INF/INDEX.LIST(及 io.netty.versions.properties 等),打 APK 时
-    // mergeDebugJavaResource 因"同名多份"直接失败。这些是 jar 元数据,APK 里用不到,
-    // 统一丢弃即可(assembleDebug 才走到这步,compileDebugKotlin 看不到)。
+    // 多个依赖的 jar 各自带一份同名元数据(META-INF/LICENSE、NOTICE、INDEX.LIST……),
+    // 打 APK 时 mergeDebugJavaResource 因"同名多份"直接失败。这些是 jar 元数据,
+    // APK 里用不到,统一丢弃即可(assembleDebug 才走到这步,compileDebugKotlin 看不到)。
+    // (netty 那两条原先是给 HiveMQ 带进来的 Netty 用的;HiveMQ 已删,留着无害。)
     packaging {
+        // 手表进 tailnet 的那个进程(libgalaxytailnet.so)是**可执行文件**,要从
+        // nativeLibraryDir 起。AGP 4.2 起默认不解压原生库(留在 APK 里按偏移映射),
+        // nativeLibraryDir 里就没有真实文件可执行。打开它 = extractNativeLibs=true,
+        // 安装时解压到只读且允许执行的目录(与安卓仓 llama-server 同一个坑、同一个解法)。
+        jniLibs {
+            useLegacyPackaging = true
+        }
         resources {
             excludes += setOf(
                 "META-INF/INDEX.LIST",
@@ -109,6 +120,21 @@ android {
         }
     }
 
+    // 单测里让 android.* 的桩方法返回默认值,而不是抛
+    // "Method w in android.util.Log not mocked"。
+    //
+    // 为什么需要:AIPClient 的 msgpack 编解码是纯函数,但它的 catch 分支写了
+    // Log.w。于是**恰恰是失败路径**(喂坏数据该回 null)在单测里碰不得 ——
+    // 而那正是最值得测的一条。
+    //
+    // 这行**不**许可什么:它只是把日志变成空操作,不会把被测逻辑变成假的。
+    // 任何需要真 Android 行为的断言(Context、SharedPreferences、Looper……)
+    // 在这里只会拿到 0/null/false,那种测试是假绿 —— 要测那些请上
+    // Robolectric 或插桩测试,别靠这行蒙混。
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     // Remove unused kotlin.Metadata annotations at build time
     kotlin {
         sourceSets.all {
@@ -118,6 +144,43 @@ android {
         }
     }
 }
+
+// ── 手表自己进 tailnet 的那个进程(本仓 tailnet/,Go)────────────────────────────
+//
+// 为什么要编一个 Go 程序进 APK:Wear OS 把 VPN 授权做成了桩,装不了 Tailscale。
+// tailnet/ 用 tsnet 以用户态加入 tailnet(不需要 VPN 授权),在回环口上转发到网关。
+// 出门在外、只带手表时,这是直连电脑的那条路。详见 tailnet/main.go 顶部。
+//
+// 只编 arm64-v8a:手表侧只支持 64 位(所有者决定;32 位 ARM 要 cgo + NDK 才能编)。
+// 名字必须是 lib*.so,安装器才会把它解压进 nativeLibraryDir。
+//
+// 需要 Go(版本见 tailnet/go.mod;GOTOOLCHAIN=auto 时会自动取对应工具链)。
+// 没有 Go 就**构建失败并说明原因** —— 不静默跳过:跳过的结果是一个"出门连不上"
+// 的 APK,而没人知道是少了这个文件。
+val tailnetSrc = rootProject.file("tailnet")
+val tailnetJniDir = layout.buildDirectory.dir("generated/tailnet/jniLibs")
+val buildTailnet by tasks.registering(Exec::class) {
+    description = "把 tailnet/ 编成 arm64 Android 可执行文件,打进 jniLibs"
+    inputs.files(fileTree(tailnetSrc) { include("*.go", "go.mod", "go.sum") })
+    val out = tailnetJniDir.map { it.file("arm64-v8a/libgalaxytailnet.so") }
+    outputs.file(out)
+    workingDir = tailnetSrc
+    environment("GOOS", "android")
+    environment("GOARCH", "arm64")
+    environment("CGO_ENABLED", "0")
+    commandLine("go", "build", "-trimpath", "-ldflags=-s -w", "-o", out.get().asFile.absolutePath, ".")
+    doFirst {
+        val ok = runCatching { ProcessBuilder("go", "version").start().waitFor() == 0 }.getOrDefault(false)
+        if (!ok) {
+            throw GradleException(
+                "构建手表 APK 需要 Go(tailnet/ 是出门直连用的 tailnet 进程)。" +
+                    "请安装 Go 并确保 `go` 在 PATH 里,版本见 tailnet/go.mod。"
+            )
+        }
+    }
+}
+android.sourceSets.getByName("main").jniLibs.srcDir(tailnetJniDir.get().asFile)
+tasks.named("preBuild") { dependsOn(buildTailnet) }
 
 dependencies {
     // PR-SHARED-TRANSPORT: Reuse shared transport module from Android project
@@ -190,8 +253,7 @@ dependencies {
     // Wear OS — Input (for rotary input / hardware buttons)
     implementation("androidx.wear:wear-input:1.1.0")
 
-    // HiveMQ MQTT Client
-    implementation("com.hivemq:hivemq-mqtt-client:1.3.3")
+    // (HiveMQ MQTT client 删了:全仓没有一处 import 它,却传递性拖进整套 Netty。)
 
     // WebRTC —— 实时语音通话的媒体通道。
     //
