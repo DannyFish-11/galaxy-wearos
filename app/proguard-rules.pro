@@ -7,8 +7,6 @@
 -dontwarn okhttp3.**
 -keep class okhttp3.OkHttpClient { *; }
 -keep class okhttp3.OkHttpClient$Builder { *; }
--keep class okhttp3.CertificatePinner { *; }
--keep class okhttp3.CertificatePinner$Builder { *; }
 -keep class okhttp3.Request { *; }
 -keep class okhttp3.Response { *; }
 

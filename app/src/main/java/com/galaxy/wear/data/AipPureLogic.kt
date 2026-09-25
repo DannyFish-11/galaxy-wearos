@@ -29,6 +29,25 @@ import kotlinx.serialization.json.*
 internal object AipPureLogic {
 
     /**
+     * 把用户在设置页填的地址整理成 ws:// / wss://。
+     *
+     * 没写协议时(比如只填了 `192.168.1.23:9000`),原先一律补成 `wss://` —— 而网关
+     * 默认说明文(没配证书就不开 TLS),内网地址也拿不到可信证书,于是"照着局域网 IP
+     * 填进去"这件最自然的事必然握手失败。现在:内网地址补 `ws://`,其余补 `wss://`。
+     * 内网的判据与 [com.ufo.galaxy.shared.protocol.CleartextPolicy] 是同一份。
+     */
+    internal fun normalizeScheme(url: String): String {
+        val u = url.trim()
+        return when {
+            u.startsWith("ws://") || u.startsWith("wss://") -> u
+            u.startsWith("https://") -> "wss://" + u.removePrefix("https://")
+            u.startsWith("http://") -> "ws://" + u.removePrefix("http://")
+            com.ufo.galaxy.shared.protocol.CleartextPolicy.isPermitted("ws://$u") -> "ws://$u"
+            else -> "wss://$u"
+        }
+    }
+
+    /**
      * Build WebSocket URL with auto-path attachment.
      * W2-FIX: Unified port 9000 across all configurations.
      * W13-FIX: If URL has no /ws path, appends /{API_VERSION}/ws/device/{deviceId}.

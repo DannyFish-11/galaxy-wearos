@@ -71,11 +71,12 @@ android {
             //   手填的值进 EncryptedSharedPreferences 的 server_url。
             // 要再引入编译期默认地址,请先确认它真的会被读,否则就是又立一块假路牌。
             //
-            // SECURITY: SSL certificate pinning hashes. Replace with real SHA-256 pins in production.
-            buildConfigField("String", "CERT_PIN_PRIMARY", "\"\"")
-            buildConfigField("String", "CERT_PIN_BACKUP", "\"\"")
-            // B4-FIX: release builds use strict network_security_config without cleartext whitelist
-            resValue("xml", "network_security_config", "@xml/network_security_config_release")
+            // 这里原先还有两样东西,一并删掉:
+            //  * CERT_PIN_PRIMARY / BACKUP —— 值是空串,AIPClient 见空就跳过固定;钉的域名
+            //    "galaxy.ufo.ai" 本系统也从不连。
+            //  * resValue 把 network_security_config 换成一份"全禁明文"的 release 版 ——
+            //    而设备间只走内网、网关默认说明文 ws://,于是 release 版手表**任何内网
+            //    地址都连不上**。现在只有一份配置,"明文只许对内网"由 CleartextPolicy 判。
         }
         debug {
             isMinifyEnabled = false
@@ -86,15 +87,13 @@ android {
             // 最像真的那块假路牌。
             // 本地联调的正确做法:让 mDNS 发现开发机,或在设置页手填(模拟器填 ws://10.0.2.2:9000,
             // 真机填局域网/Tailscale 地址)。
-            buildConfigField("String", "CERT_PIN_PRIMARY", "\"\"")
-            buildConfigField("String", "CERT_PIN_BACKUP", "\"\"")
         }
     }
 
-    // HiveMQ MQTT client 传递性引入 Netty,多个 netty-*.jar 各自带一份
-    // META-INF/INDEX.LIST(及 io.netty.versions.properties 等),打 APK 时
-    // mergeDebugJavaResource 因"同名多份"直接失败。这些是 jar 元数据,APK 里用不到,
-    // 统一丢弃即可(assembleDebug 才走到这步,compileDebugKotlin 看不到)。
+    // 多个依赖的 jar 各自带一份同名元数据(META-INF/LICENSE、NOTICE、INDEX.LIST……),
+    // 打 APK 时 mergeDebugJavaResource 因"同名多份"直接失败。这些是 jar 元数据,
+    // APK 里用不到,统一丢弃即可(assembleDebug 才走到这步,compileDebugKotlin 看不到)。
+    // (netty 那两条原先是给 HiveMQ 带进来的 Netty 用的;HiveMQ 已删,留着无害。)
     packaging {
         resources {
             excludes += setOf(
@@ -210,8 +209,7 @@ dependencies {
     // Wear OS — Input (for rotary input / hardware buttons)
     implementation("androidx.wear:wear-input:1.1.0")
 
-    // HiveMQ MQTT Client
-    implementation("com.hivemq:hivemq-mqtt-client:1.3.3")
+    // (HiveMQ MQTT client 删了:全仓没有一处 import 它,却传递性拖进整套 Netty。)
 
     // WebRTC —— 实时语音通话的媒体通道。
     //

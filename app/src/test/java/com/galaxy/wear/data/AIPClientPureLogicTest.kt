@@ -80,6 +80,37 @@ class AIPClientPureLogicTest {
         )
     }
 
+    // ── normalizeScheme:设置页手填的地址该补哪个协议 ─────────────────────
+
+    @Test
+    fun `填裸内网地址补 ws —— 网关默认说明文`() {
+        // 原先一律补 wss://,而网关没配证书就不开 TLS:照着局域网 IP 填进去必然握手失败。
+        for ((input, want) in listOf(
+            "192.168.1.23:9000" to "ws://192.168.1.23:9000",
+            "100.101.7.42:9000" to "ws://100.101.7.42:9000",
+            "galaxy-desk.local:9000" to "ws://galaxy-desk.local:9000",
+            "  10.0.2.2:9000  " to "ws://10.0.2.2:9000",
+        )) assertEquals(input, want, AipPureLogic.normalizeScheme(input))
+    }
+
+    @Test
+    fun `填裸公网地址或域名补 wss`() {
+        assertEquals("wss://box.tail1234.ts.net", AipPureLogic.normalizeScheme("box.tail1234.ts.net"))
+        assertEquals("wss://8.8.8.8:9000", AipPureLogic.normalizeScheme("8.8.8.8:9000"))
+    }
+
+    @Test
+    fun `写了协议就照写的来,http 映射成 ws`() {
+        assertEquals("ws://8.8.8.8:9000", AipPureLogic.normalizeScheme("ws://8.8.8.8:9000"))
+        assertEquals("wss://10.0.0.5:9000", AipPureLogic.normalizeScheme("wss://10.0.0.5:9000"))
+        assertEquals("ws://192.168.1.2:9000/x", AipPureLogic.normalizeScheme("http://192.168.1.2:9000/x"))
+        // 只换开头 —— 原先用 replace,路径里再出现一次 "https://" 也会被改掉。
+        assertEquals(
+            "wss://h/ws?next=https://a",
+            AipPureLogic.normalizeScheme("https://h/ws?next=https://a"),
+        )
+    }
+
     // ── parseDeviceList:尽力而为,缺字段回落,整体坏了回空表 ─────────────
 
     private fun parse(raw: String): List<DeviceInfo> =

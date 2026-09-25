@@ -38,7 +38,6 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.*
-import okhttp3.CertificatePinner
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
@@ -47,7 +46,6 @@ import kotlin.coroutines.cancellation.CancellationException
  *
  * Fixes from audit round 2:
  * - C4: MessagePack JSON conversion with recursive Value-to-JsonElement
- * - H2: SSL certificate pinning for OkHttp engine
  * - Heartbeat: pong timeout detection (missing pong -> reconnect)
  * - Reconnect: exponential backoff with 30s cap and jitter
  * - Thread-safe connect/disconnect with Mutex
@@ -76,35 +74,15 @@ class AIPClient(
         isLenient = true
     }
 
-    // W6-FIX: SSL certificate pinning with production domain pins.
-    // SECURITY: Pins must be injected via BuildConfig from CI/CD. If not configured,
-    // certificate pinning is disabled to prevent broken connections from invalid placeholders.
-    private val certificatePinner: CertificatePinner? by lazy {
-        val primaryPin = BuildConfig.CERT_PIN_PRIMARY
-        val backupPin = BuildConfig.CERT_PIN_BACKUP
-        if (primaryPin.isNullOrBlank() || primaryPin.contains("Placeholder")) {
-            Log.w(GalaxyWearApplication.TAG, "SSL pinning disabled: no valid pins configured")
-            null
-        } else {
-            // Round-4 HIGH: pin production domain, not the placeholder
-            val pinDomain = "galaxy.ufo.ai"
-            CertificatePinner.Builder()
-                .add(pinDomain, primaryPin)
-                .apply { if (!backupPin.isNullOrBlank()) add(pinDomain, backupPin) }
-                .build()
-        }
-    }
-
     // CRITICAL-FIX: HttpClient is lazy-created so disconnect() can reset without
     // killing the client. Only dispose() permanently closes it.
     private val client by lazy {
         HttpClient(OkHttp) {
-            engine {
-                // H2: Apply certificate pinner to OkHttp if configured
-                val okBuilder = okhttp3.OkHttpClient.Builder()
-                certificatePinner?.let { okBuilder.certificatePinner(it) }
-                preconfigured = okBuilder.build()
-            }
+            // 这里原先有一段证书固定(certificate pinning),钉的是 "galaxy.ufo.ai" ——
+            // 一个本系统从不连的域名,pin 值也是空串(于是整段自动跳过)。设备只拨
+            // 内网地址:局域网 IP、tailnet 的 100.x.y.z,那条路的加密与身份由 WireGuard
+            // 负责。一段永远不生效、生效了也钉错对象的安全代码,只会让读代码的人以为
+            // "这里有 TLS 保护",所以删掉。
             install(WebSockets)
             install(ContentNegotiation) { json(jsonFormat) }
             install(Logging) {
@@ -201,11 +179,15 @@ class AIPClient(
         }
 
         try {
-            var wsUrl = when {
-                url.startsWith("ws://") || url.startsWith("wss://") -> url
-                url.startsWith("https://") -> url.replace("https://", "wss://")
-                url.startsWith("http://") -> url.replace("http://", "ws://")
-                else -> "wss://$url" // Default to secure WebSocket if no scheme given
+            var wsUrl = AipPureLogic.normalizeScheme(url)
+
+            // 明文只许对内网地址说(与手机同一份判定,见 shared-protocol 的
+            // CleartextPolicy)。系统层的 network_security_config 已放开明文 —— 它不认
+            // 网段,原先的白名单把真实的局域网地址和 tailnet 地址全拦了 —— 所以"不许拿
+            // 明文连公网"这条在这里守。自动发现的候选已在 ConnectionPathPlanner 里过滤过,
+            // 这里拦的是设置页手填的那一个。
+            require(com.ufo.galaxy.shared.protocol.CleartextPolicy.isPermitted(wsUrl)) {
+                "明文 ws:// 只能连内网地址(局域网 / tailnet / *.local):$wsUrl"
             }
 
             // Auto-append /ws/device/{deviceId} if path is missing
