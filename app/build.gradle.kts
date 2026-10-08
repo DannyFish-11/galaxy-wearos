@@ -201,6 +201,15 @@ android.sourceSets.getByName("main").jniLibs.srcDir(tailnetJniDir.get().asFile)
 tasks.named("preBuild") { dependsOn(buildTailnet) }
 
 dependencies {
+    // release 构建的 lintVitalRelease 会因 InvalidFragmentVersionForActivityResult 失败：传递依赖
+    // 带进来一份 < 1.3.0 的 androidx.fragment，而本应用用了 Activity Result API（registerForActivityResult）。
+    // 用约束而不是直接依赖：只在 fragment 本来就被拉进来时把它的版本抬上去，不凭空多引一个库。
+    constraints {
+        implementation("androidx.fragment:fragment:1.8.5") {
+            because("旧版 fragment (<1.3.0) 不兼容 Activity Result API，release 的 lintVital 会拦")
+        }
+    }
+
     // PR-SHARED-TRANSPORT: Reuse shared transport module from Android project
     // Eliminates code duplication of GatewayClient / AipTransportManager / BleGatewayClient / MqttGatewayClient.
     implementation(project(":shared-transport"))
