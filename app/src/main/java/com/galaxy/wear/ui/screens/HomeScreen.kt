@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.*
@@ -26,7 +27,8 @@ import com.galaxy.wear.ui.triggerHaptic
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
-import com.galaxy.wear.domain.model.Phase
+import com.galaxy.wear.domain.HomeStatus
+import com.galaxy.wear.domain.StatusTone
 import com.galaxy.wear.ui.theme.*
 import kotlinx.coroutines.launch
 
@@ -36,12 +38,15 @@ import kotlinx.coroutines.launch
  * PR-CIRCULAR-FIX: Changed chip layout from horizontal Row (clips on round screen)
  * to vertical Column (fits within circular display bounds).
  *
- * Three entries: [语音] [设备] [设置] — vertically stacked, centered,
- * each 0.6 fillMaxWidth to stay clear of circular edges.
+ * Entries are vertically stacked, centered, each 0.58 fillMaxWidth to stay clear
+ * of circular edges.
+ *
+ * 首页回答的是「这块表和智能体的关系」：连着没有、要不要重新配对、有几件事在等你。
+ * 不显示三态 —— 那是电脑上的东西，不是手表的。
  */
 @Composable
 fun HomeScreen(
-    phase: Phase,
+    status: HomeStatus,
     isAmbient: Boolean = false,
     onVoice: () -> Unit,
     /** 进入实时通话。与 [onVoice] 的一问一答是两条路,不是同一件事的两种入口。 */
@@ -50,6 +55,8 @@ fun HomeScreen(
     onConversation: () -> Unit,
     onDevices: () -> Unit,
     onSettings: () -> Unit,
+    /** 令牌失效时的唯一出路：回到配对页。 */
+    onRepair: () -> Unit = {},
     islandItems: List<com.galaxy.wear.ui.components.IslandItem> = emptyList(),
 ) {
     val listState = rememberScalingLazyListState(initialCenterItemIndex = 1)
@@ -83,31 +90,33 @@ fun HomeScreen(
                 )
             }
 
-            // ── Phase indicator dots (BLACK/WHITE/GRAY) ─
+            // ── 与智能体的连接 ───────────────────────
             item {
-                PhaseDotsHome(phase = phase, isAmbient = isAmbient)
-            }
-
-            // ── Phase status text ────────────────────
-            item {
-                // 标签与颜色都取自 PhaseVisual —— Tile 读的是同一份，
-                // 否则表盘和 Tile 并排时同一相位会是两个灰。
-                val label = PhaseVisual.label(phase)
-                val color = PhaseVisual.statusColor(phase)
+                // 颜色取自 StatusVisual —— Tile 读的是同一份，
+                // 否则表盘和 Tile 并排时同一档状态会是两个灰。
+                val color = Color(StatusVisual.argbLong(status.tone))
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(
+                        Modifier
+                            .size(8.dp)
+                            .background(color, CircleShape)
+                    )
                     Text(
-                        text = label,
+                        text = status.label,
                         style = MaterialTheme.typography.title3,
                         color = color,
-                        textAlign = TextAlign.Center
-                    )
-                    Text(
-                        text = phase.name.uppercase(),
-                        style = MaterialTheme.typography.caption3,
-                        color = color.copy(alpha = 0.4f),
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 1.dp)
+                        modifier = Modifier.padding(top = 4.dp)
                     )
+                    status.detail?.let { detail ->
+                        Text(
+                            text = detail,
+                            style = MaterialTheme.typography.caption3,
+                            color = color.copy(alpha = 0.7f),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(top = 1.dp)
+                        )
+                    }
                 }
             }
 
@@ -120,6 +129,21 @@ fun HomeScreen(
                         .padding(top = 12.dp, bottom = 8.dp)
                         .fillMaxWidth(0.58f) // ← PR-CIRCULAR-FIX: stay inside round edges
                 ) {
+                    if (status.tone == StatusTone.NEEDS_REPAIR) {
+                        CompactChip(
+                            onClick = { triggerHaptic(context); onRepair() },
+                            label = { Text("重新配对", style = MaterialTheme.typography.caption2) },
+                            icon = {
+                                Icon(
+                                    imageVector = Icons.Default.LinkOff,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            },
+                            colors = ChipDefaults.primaryChipColors(),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                     CompactChip(
                         onClick = { triggerHaptic(context); onVoice() },
                         label = { Text("语音", style = MaterialTheme.typography.caption2) },
@@ -190,15 +214,6 @@ fun HomeScreen(
         }
     }
 
-    // ── Halo ring (ambient, always rendered) ────
-    val pulseTrigger by app.pulseTrigger.collectAsState()
-    PhaseHaloRing(
-        phase = phase,
-        pulseTrigger = pulseTrigger,
-        isAmbient = isAmbient,
-        modifier = Modifier.fillMaxSize()
-    )
-
     // ── DYNAMIC ISLAND(全屏 overlay,置于最上层)──
     // 真 bug 修复:之前把 DynamicIsland 放在 ScalingLazyColumn 的 item{} 里。
     // Lazy 列表沿滚动轴用无限高度约束测量 item,而灵动岛点开(EXPANDED)后内部渲染
@@ -211,11 +226,7 @@ fun HomeScreen(
     if (islandItems.isNotEmpty()) {
         com.galaxy.wear.ui.components.DynamicIsland(
             items = islandItems,
-            phaseText = when (phase) {
-                Phase.SILENT -> "Galaxy"
-                Phase.LIMINAL -> "认知中..."
-                Phase.MANIFEST -> "执行中..."
-            },
+            statusText = status.label,
             onVoiceReply = onVoice,
             // Dismissing (tap outside / "关闭") only closes the expanded
             // overlay by default - without this, the same item would
@@ -227,130 +238,3 @@ fun HomeScreen(
         )
     }
 }
-
-@Composable
-private fun PhaseDotsHome(phase: Phase, isAmbient: Boolean = false) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .background(SurfaceGlass, CircleShape)
-            .padding(horizontal = 16.dp, vertical = 10.dp)
-    ) {
-        // SILENT — dark gray
-        val silentScale by animateFloatAsState(
-            targetValue = if (phase == Phase.SILENT) 1.25f else 0.8f,
-            animationSpec = if (isAmbient) snap() else spring(dampingRatio = 0.6f, stiffness = 300f),
-            label = "dot_silent"
-        )
-        val silentAlpha by animateFloatAsState(
-            targetValue = if (phase == Phase.SILENT) 1.0f else 0.25f,
-            animationSpec = if (isAmbient) snap() else tween(300),
-            label = "alpha_silent"
-        )
-        val silentColor = if (phase == Phase.SILENT) GrayManifest else GraySilent
-
-        // LIMINAL — medium gray (NOT amber)
-        val liminalScale by animateFloatAsState(
-            targetValue = if (phase == Phase.LIMINAL) 1.25f else 0.8f,
-            animationSpec = if (isAmbient) snap() else spring(dampingRatio = 0.6f, stiffness = 300f),
-            label = "dot_liminal"
-        )
-        val liminalAlpha by animateFloatAsState(
-            targetValue = if (phase == Phase.LIMINAL) 1.0f else 0.25f,
-            animationSpec = if (isAmbient) snap() else tween(300),
-            label = "alpha_liminal"
-        )
-        val liminalColor = if (phase == Phase.LIMINAL) GrayManifest else GrayLiminal
-
-        // MANIFEST — bright white/gray
-        val manifestScale by animateFloatAsState(
-            targetValue = if (phase == Phase.MANIFEST) 1.25f else 0.8f,
-            animationSpec = if (isAmbient) snap() else spring(dampingRatio = 0.6f, stiffness = 300f),
-            label = "dot_manifest"
-        )
-        val manifestAlpha by animateFloatAsState(
-            targetValue = if (phase == Phase.MANIFEST) 1.0f else 0.25f,
-            animationSpec = if (isAmbient) snap() else tween(300),
-            label = "alpha_manifest"
-        )
-        val manifestColor = if (phase == Phase.MANIFEST) Color.White else GrayManifest
-
-        // LIMINAL pulsing animation
-        val liminalPulseTransition = rememberInfiniteTransition(label = "liminal_pulse")
-        val liminalPulse by liminalPulseTransition.animateFloat(
-            initialValue = 1f,
-            targetValue = if (phase == Phase.LIMINAL && !isAmbient) 1.6f else 1f,
-            animationSpec = infiniteRepeatable(tween(900, easing = EaseInOutCubic), RepeatMode.Reverse),
-            label = "liminal_pulse"
-        )
-
-        // Draw dots
-        Box(Modifier.size(8.dp).scale(silentScale).background(silentColor.copy(alpha = silentAlpha), CircleShape))
-
-        val liminalFinalScale = if (phase == Phase.LIMINAL && !isAmbient) liminalScale * liminalPulse else liminalScale
-        Box(Modifier.size(8.dp).scale(liminalFinalScale).background(liminalColor.copy(alpha = liminalAlpha), CircleShape))
-
-        Box(Modifier.size(8.dp).scale(manifestScale).background(manifestColor.copy(alpha = manifestAlpha), CircleShape))
-    }
-}
-
-// ═══════════════════════════════════════════════════════
-// Phase Halo Ring (monochrome — no blue)
-// ═══════════════════════════════════════════════════════
-@Composable
-fun PhaseHaloRing(
-    phase: Phase,
-    pulseTrigger: Int,
-    isAmbient: Boolean = false,
-    modifier: Modifier = Modifier
-) {
-    val haloAlpha by animateFloatAsState(
-        targetValue = when (phase) {
-            Phase.SILENT -> 0f
-            Phase.LIMINAL -> 0.3f
-            Phase.MANIFEST -> 0.5f
-        },
-        animationSpec = tween(800, easing = EaseInOutSine),
-        label = "halo_alpha"
-    )
-    val infiniteTransition = rememberInfiniteTransition(label = "halo_breath")
-    val breathAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.15f,
-        targetValue = if (phase == Phase.LIMINAL && !isAmbient) 0.4f else 0.15f,
-        animationSpec = infiniteRepeatable(tween(2000, easing = EaseInOutSine), RepeatMode.Reverse),
-        label = "halo_breath"
-    )
-    val pulseScale = remember { Animatable(1f) }
-    LaunchedEffect(pulseTrigger) {
-        if (pulseTrigger > 0) {
-            pulseScale.snapTo(0.9f)
-            pulseScale.animateTo(1f, tween(150, easing = EaseOutCubic))
-        }
-    }
-    val finalAlpha = if (isAmbient) haloAlpha else haloAlpha * breathAlpha
-    val haloColor = when (phase) {
-        Phase.SILENT -> Color.Transparent
-        Phase.LIMINAL -> GrayLiminal
-        Phase.MANIFEST -> WhitePrimary.copy(alpha = 0.7f)
-    }
-
-    Canvas(modifier = modifier.scale(pulseScale.value)) {
-        val cx = size.width / 2
-        val cy = size.height / 2
-        val r = (size.minDimension / 2) - 8.dp.toPx()
-        drawCircle(
-            color = haloColor.copy(alpha = finalAlpha),
-            radius = r,
-            center = Offset(cx, cy),
-            style = Stroke(width = 2.5f)
-        )
-        drawCircle(
-            color = haloColor.copy(alpha = finalAlpha * 0.5f),
-            radius = r + 4.dp.toPx(),
-            center = Offset(cx, cy),
-            style = Stroke(width = 1f)
-        )
-    }
-}
-

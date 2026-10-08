@@ -506,13 +506,6 @@ class AIPClient(
         )
     }
 
-    suspend fun sendPhaseReport(phase: String) {
-        sendCommand("phase_report", buildJsonObject {
-            put("phase", phase)
-            put("device", "wear_os")
-        })
-    }
-
     /**
      * 上报可打扰性 —— 手表回答"现在能不能打扰他",而**不**交出身体数据。
      *

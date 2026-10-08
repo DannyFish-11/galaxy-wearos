@@ -16,7 +16,7 @@ import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.galaxy.wear.GalaxyWearApplication
 import com.galaxy.wear.MainActivity
-import com.galaxy.wear.domain.model.Phase
+import com.galaxy.wear.domain.HomeStatus
 import com.galaxy.wear.sensing.InterruptibilityMonitor
 import com.galaxy.wear.sensing.InterruptibilityReport
 import com.galaxy.wear.sensing.InterruptibilityUplinkPolicy
@@ -24,6 +24,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -32,9 +33,9 @@ import kotlinx.coroutines.launch
  *
  * Runs continuously in the background to:
  * - Maintain AIP v3 WebSocket
- * - Push phase state to Galaxy
- * - Receive push notifications from Galaxy
- * - Handle voice command wake-ups
+ * - Carry the agent's commands, questions and messages to the wrist
+ * - Report interruptibility so the agent knows whether now is a good time
+ * - Keep the ongoing notification honest about the connection
  */
 class GalaxyWearService : LifecycleService() {
 
@@ -69,7 +70,7 @@ class GalaxyWearService : LifecycleService() {
     private val binder = LocalBinder()
     @Volatile
     private var isRunning = false
-    private var phaseObserverJob: Job? = null
+    private var statusObserverJob: Job? = null
     private var interruptibilityMonitor: InterruptibilityMonitor? = null
     private var interruptibilityJob: Job? = null
     private val uplinkPolicy = InterruptibilityUplinkPolicy()
@@ -114,7 +115,7 @@ class GalaxyWearService : LifecycleService() {
         synchronized(this) {
             if (!isRunning) {
                 isRunning = true
-                observePhaseChanges()
+                observeStatus()
                 observeInterruptibility()
             }
         }
@@ -236,43 +237,30 @@ class GalaxyWearService : LifecycleService() {
         stopGracefully()
     }
 
-    private fun observePhaseChanges() {
+    /**
+     * 常驻通知的文字跟着「与智能体的连接」走。
+     *
+     * 不再跟三态：三态是电脑上的东西，手表既不显示它也不上报它。
+     * 这条通知唯一该诚实回答的是：连着没有、要不要重新配对。
+     */
+    private fun observeStatus() {
         val app = application as GalaxyWearApplication
 
-        // FIX: Guard against uninitialized AIPClient (WARNING-7)
-        if (!app.isAipClientReady()) {
-            Log.w(TAG, "AIPClient not initialized — skipping phase observation")
-            return
-        }
-
         // Cancel any previous observer before starting a new one
-        phaseObserverJob?.cancel()
+        statusObserverJob?.cancel()
 
-        phaseObserverJob = lifecycleScope.launch {
+        statusObserverJob = lifecycleScope.launch {
             try {
-                app.phase.collectLatest { phase ->
+                combine(app.connectionState, app.needsRepair) { state, repair ->
+                    HomeStatus.of(state, repair, pending = 0).label
+                }.collectLatest { label ->
                     if (!isRunning) return@collectLatest
-
-                    val phaseText = when (phase) {
-                        Phase.SILENT -> "静默"
-                        Phase.LIMINAL -> "临界"
-                        Phase.MANIFEST -> "显现"
-                    }
-                    updateNotification("Galaxy — $phaseText")
-
-                    // Push phase report to Galaxy (best-effort)
-                    try {
-                        app.aipClient.sendPhaseReport(phase.name.lowercase())
-                    } catch (e: CancellationException) {
-                        // Normal during shutdown
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Phase report failed: ${e.message}")
-                    }
+                    updateNotification("Galaxy — $label")
                 }
             } catch (e: CancellationException) {
-                Log.d(TAG, "Phase observer cancelled")
+                Log.d(TAG, "Status observer cancelled")
             } catch (e: Exception) {
-                Log.e(TAG, "Phase observer crashed: ${e.message}")
+                Log.e(TAG, "Status observer crashed: ${e.message}")
             }
         }
     }

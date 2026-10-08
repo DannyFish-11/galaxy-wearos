@@ -29,7 +29,6 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.wear.compose.material.*
 import com.galaxy.wear.GalaxyWearApplication
-import com.galaxy.wear.domain.model.Phase
 import com.galaxy.wear.ui.theme.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -70,9 +69,6 @@ fun VoiceScreen(
 
     // Animated waveform time
     var waveTime by remember { mutableFloatStateOf(0f) }
-
-    // Listen for phase
-    val phase by app.phase.collectAsState()
 
     // Auto-advance waveform when active
     LaunchedEffect(isListening) {
@@ -169,9 +165,6 @@ fun VoiceScreen(
         // ── Nebula particles (subtle) ──────────────────
         NebulaParticles()
 
-        // ── Phase dots (black/white/gray) ──────────────
-        PhaseDots(phase = phase, modifier = Modifier.align(Alignment.TopCenter).padding(top = 32.dp))
-
         // ── Glass Orb + Waveform center ────────────────
         Box(
             modifier = Modifier
@@ -223,77 +216,6 @@ fun VoiceScreen(
                 .padding(bottom = 8.dp)
         )
     }
-}
-
-// ═══════════════════════════════════════════════════════
-// Phase Dots (BLACK/WHITE/GRAY only)
-// ═══════════════════════════════════════════════════════
-@Composable
-private fun PhaseDots(phase: Phase, modifier: Modifier = Modifier) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = modifier
-    ) {
-        // SILENT — dark gray
-        val silentColor = when (phase) {
-            Phase.SILENT -> GrayManifest    // bright when active
-            else -> GraySilent               // dim when inactive
-        }
-        val silentGlow = when (phase) {
-            Phase.SILENT -> GrayManifest.copy(alpha = 0.5f)
-            else -> Color.Transparent
-        }
-
-        // LIMINAL — medium gray (NOT amber)
-        val liminalColor = when (phase) {
-            Phase.LIMINAL -> GrayManifest
-            else -> GrayLiminal
-        }
-        val liminalGlow = when (phase) {
-            Phase.LIMINAL -> GrayManifest.copy(alpha = 0.5f)
-            else -> Color.Transparent
-        }
-
-        // MANIFEST — white/bright gray
-        val manifestColor = when (phase) {
-            Phase.MANIFEST -> Color.White
-            else -> GrayManifest
-        }
-        val manifestGlow = when (phase) {
-            Phase.MANIFEST -> Color.White.copy(alpha = 0.4f)
-            else -> Color.Transparent
-        }
-
-        PhaseDot(color = silentColor, glow = silentGlow, isPulsing = phase == Phase.SILENT)
-        PhaseDot(color = liminalColor, glow = liminalGlow, isPulsing = phase == Phase.LIMINAL)
-        PhaseDot(color = manifestColor, glow = manifestGlow, isPulsing = phase == Phase.MANIFEST)
-    }
-}
-
-@Composable
-private fun PhaseDot(color: Color, glow: Color, isPulsing: Boolean) {
-    val scale by animateFloatAsState(
-        targetValue = if (isPulsing) 1.3f else 1f,
-        animationSpec = if (isPulsing) {
-            infiniteRepeatable(tween(900, easing = EaseInOutCubic), RepeatMode.Reverse)
-        } else {
-            tween(300)
-        },
-        label = "phase_dot_scale"
-    )
-    Box(
-        modifier = Modifier
-            .size(6.dp)
-            .scale(if (isPulsing) scale else 1f)
-            .background(
-                brush = Brush.radialGradient(
-                    listOf(glow, Color.Transparent),
-                    radius = 12.dp.value
-                ),
-                shape = CircleShape
-            )
-            .background(color, CircleShape)
-    )
 }
 
 // ═══════════════════════════════════════════════════════

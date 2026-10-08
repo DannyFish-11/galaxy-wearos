@@ -24,7 +24,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
 import com.galaxy.wear.GalaxyWearApplication
-import com.galaxy.wear.domain.model.Phase
 import com.galaxy.wear.ui.HapticType
 import com.galaxy.wear.ui.triggerHaptic
 import com.galaxy.wear.ui.theme.GalaxyWearTheme
@@ -153,9 +152,6 @@ class VoiceActivity : ComponentActivity() {
 
     @Composable
     private fun PushToTalkScreen() {
-        val app = application as GalaxyWearApplication
-        val phase by app.phase.collectAsState()
-
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -254,32 +250,6 @@ class VoiceActivity : ComponentActivity() {
                         maxLines = 1
                     )
                 }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Phase indicator (ambient state awareness)
-                PhaseMiniDots(phase = phase)
-            }
-        }
-    }
-
-    @Composable
-    private fun PhaseMiniDots(phase: Phase) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Phase.values().forEach { p ->
-                val color = when (p) {
-                    Phase.SILENT -> if (phase == p) Color(0xFF444444) else Color(0xFF222222)
-                    Phase.LIMINAL -> if (phase == p) Color(0xFF808080) else Color(0xFF222222)
-                    Phase.MANIFEST -> if (phase == p) Color(0xFFCCCCCC) else Color(0xFF222222)
-                }
-                Box(
-                    modifier = Modifier
-                        .size(5.dp)
-                        .background(color, CircleShape)
-                )
             }
         }
     }

@@ -3,8 +3,8 @@ package com.galaxy.wear.domain.model
 /**
  * 决策选项 —— 一个可点选的答案。
  *
- * 从 `ui/screens/DecisionScreen.kt` 挪到 domain 层,理由与 [Phase] 当初那次
- * 一致(见 Phase.kt 的 LOW-FIX):它是**领域概念**,不是某个界面的私有类型。
+ * 从 `ui/screens/DecisionScreen.kt` 挪到 domain 层:它是**领域概念**,
+ * 不是某个界面的私有类型。
  *
  * 原来的位置造成了一处层次倒挂:`domain/DecisionRequestParsing.kt`(纯解析)
  * 必须 `import com.galaxy.wear.ui.screens.DecisionOption` —— 领域层反过来

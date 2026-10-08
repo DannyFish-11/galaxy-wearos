@@ -17,8 +17,6 @@ import com.galaxy.wear.data.AIPMessage
 import com.ufo.galaxy.shared.protocol.MsgType
 import com.galaxy.wear.domain.DeviceRepository
 import com.galaxy.wear.domain.model.Device
-import com.galaxy.wear.domain.model.Phase
-import com.galaxy.wear.domain.model.PhaseAuthority
 import com.galaxy.wear.network.TailscaleAdapter
 import com.galaxy.wear.network.isWifiAvailable
 import com.ufo.galaxy.network.GatewayDiscovery
@@ -77,29 +75,6 @@ class GalaxyWearApplication : Application() {
         private const val SLOW_RECONNECT_INTERVAL_MS = 10L * 60 * 1000
     }
 
-    /**
-     * 中心智能体的三态。**只有桌面说了算** —— 见 [applyPhaseChange]。
-     *
-     * 为什么这里不许由连接态来写
-     * ==========================
-     * 这个字段原来有两个写入方：一个是本机连接态（CONNECTED→LIMINAL、
-     * AUTHENTICATED→MANIFEST），一个是桌面下发的相位。谁后写谁赢，于是鉴权一成功
-     * 手表就常驻「显现」，而桌面那边其实什么也没发生（silent）。用户看到的是
-     * 一台正在忙的机器，实际它在发呆。
-     *
-     * 根子上这是两件事被塞进了同一个字段：
-     * - **三态**说的是"那台电脑上的主体在干什么"——它是远端的属性；
-     * - **连接态**说的是"我这块表连上没有"——它是本机链路的属性。
-     *
-     * 手机端一直是分开的（PhaseStateMachine 由远端驱动，连接态另有 connected
-     * 布尔）。手表这边归位到同一口径：连接态请读 [connectionState]。
-     *
-     * 链路断掉时回落 SILENT 是唯一的例外，而且不是"本机判定了相位"——
-     * 是**我们不再知道**了，而"不知道"绝不能继续渲染成「显现」。
-     */
-    private val _phase = MutableStateFlow(Phase.SILENT)
-    val phase: StateFlow<Phase> = _phase.asStateFlow()
-
     private val _connectionState = MutableStateFlow(AIPConnectionState.DISCONNECTED)
     val connectionState: StateFlow<AIPConnectionState> = _connectionState.asStateFlow()
 
@@ -114,7 +89,7 @@ class GalaxyWearApplication : Application() {
     // previously HomeScreen's `islandItems` parameter had no caller-supplied
     // value anywhere, so the fully-built Island/DecisionScreen UI was
     // permanently empty. Populated for real from state_event/decision_request
-    // messages in handleStateEvent()/handleDecisionRequest() below.
+    // messages in handleLiquidEvent()/handleDecisionRequest() below.
     private val _islandItems = MutableStateFlow<List<IslandItem>>(emptyList())
     val islandItems: StateFlow<List<IslandItem>> = _islandItems.asStateFlow()
 
@@ -376,7 +351,7 @@ class GalaxyWearApplication : Application() {
             return
         }
 
-        // Observe connection state → phase mapping
+        // Observe connection state (drives the home status line, the tile and the foreground notification)
         appScope.launch {
             try {
                 aipClient.connectionState.collect { state ->
@@ -396,22 +371,13 @@ class GalaxyWearApplication : Application() {
                             if (saved.isNotEmpty()) freshToken(saved)
                         }
                     }
-                    // 连接态**不再**判定 LIMINAL/MANIFEST —— 那是桌面的属性。
-                    // 规则本身在 PhaseAuthority 里（可单测），这里只负责应用它。
-                    val linkUp = state == AIPConnectionState.CONNECTED ||
-                        state == AIPConnectionState.AUTHENTICATED
-                    val newPhase = PhaseAuthority.onLinkChange(_phase.value, linkUp)
-                    if (newPhase != _phase.value) {
-                        Log.i(TAG, "AIP link down — phase reverts to SILENT (desktop state unknown)")
-                        _phase.value = newPhase
-                        // W16-FIX: Refresh tile widget on phase change for up-to-date display
-                        GalaxyTileService.requestRefresh(this@GalaxyWearApplication)
-                    }
+                    // 连接态变了，Tile 上的「已连接 / 未连接」要跟着变。
+                    GalaxyTileService.requestRefresh(this@GalaxyWearApplication)
                 }
             } catch (e: CancellationException) {
-                Log.d(TAG, "Phase observer cancelled")
+                Log.d(TAG, "Connection observer cancelled")
             } catch (e: Exception) {
-                Log.e(TAG, "Phase observer crashed: ${e.message}")
+                Log.e(TAG, "Connection observer crashed: ${e.message}")
             }
         }
 
@@ -511,13 +477,12 @@ class GalaxyWearApplication : Application() {
             val maxRetryDelayMs = 30000L
             while (isActive) {
                 try {
-                    // PR-STATE-SYNC: Map liquid_event to STATE_EVENT for unified handling.
-                    // Both LIQUID_EVENT and STATE_EVENT carry the same semantic payload
-                    // (cross-device state synchronization); we normalize to the common handler.
+                    // liquid_event / state_event：只取其中给人看的内容（任务完成、进度、文字结果）。
+                    // 其中的相位（to_phase）是电脑上的东西，手表不收、不显示。
                     aipClient.messages.collect { msg ->
                         when (msg.type) {
                             MsgType.LIQUID_EVENT,
-                            MsgType.STATE_EVENT -> handleStateEvent(msg)
+                            MsgType.STATE_EVENT -> handleLiquidEvent(msg)
                             MsgType.DECISION_REQUEST -> handleDecisionRequest(msg)
                             MsgType.DECISION_WITHDRAW -> handleDecisionWithdraw(msg)
                             MsgType.AGENT_MESSAGE -> handleAgentMessage(msg)
@@ -540,55 +505,25 @@ class GalaxyWearApplication : Application() {
         }
     }
 
-    // LIQUID-ISLAND: pulse trigger counter (incremented to trigger halo pulse)
-    private val _pulseTrigger = MutableStateFlow(0)
-    val pulseTrigger = _pulseTrigger.asStateFlow()
-
-    // PR-STATE-SYNC: Unified handler for cross-device state synchronization events.
-    // Handles both LIQUID_EVENT (legacy) and STATE_EVENT (normalized) message types.
-    // Event payload is extracted as JsonObject per AIP v3 spec.
-    private fun handleStateEvent(event: AIPMessage) {
+    // 给人看的跨设备事件（liquid_event / state_event 里带 content 的那一类）：任务完成、进度、文字结果。
+    // 三态（to_phase）是电脑上的东西，手表既不收也不显示 —— 没有 content 的 state_event 直接忽略。
+    private fun handleLiquidEvent(event: AIPMessage) {
         // FIX: Wrap entire handler in try-catch to prevent Flow collection from terminating
         try {
-            // X-DATA-CR1: Extract liquid event fields from payload JsonObject
-            //
-            // 手表读 payload.to_phase，手机读报文**顶层**的 event_category/event_action
-            // —— 两个消费方读的位置本来就不同，因为规范信封 AipMessage 里根本没有那两个
-            // 顶层字段（ignoreUnknownKeys 会把它们直接丢掉），而手机端是拿 Gson 解原始
-            // JSON 根，所以读得到。
-            //
-            // 这个不对称曾经要了命：V2 侧三个相位发送点各手写一份报文，其中"设备刚注册完
-            // 推当前相位"那份不带 payload，于是刚配好对的手表在下一行 `?: return` 处静默
-            // 丢弃，而桌面日志写着"已推送"。V2 侧现已收敛为一处构造
-            // （core/cross_device_sync.build_phase_state_event，顶层与 payload 一次填齐），
-            // 并有 AST 检查盯住"不许再手写第四份"。手表这边因此可以安心只读 payload。
             val payload = event.payload as? kotlinx.serialization.json.JsonObject
                 ?: return
-            val content = payload["content"]?.jsonObject
-            if (content == null) {
-                // PR-WEAR-PHASE-SYNC: V2 跨设备 state_event 格式 —— payload 直接带
-                // to_phase（{from_phase,to_phase,source,sync_type}），无嵌套 content。
-                // 映射为相位变更以驱动手表三态环（与桌面 silent/liminal/manifest 同步）。
-                val toPhase = payload["to_phase"]?.jsonPrimitive?.content
-                if (toPhase != null) applyPhaseChange(toPhase)
-                return
-            }
+            val content = payload["content"]?.jsonObject ?: return
             val msgType = event.msgType
 
             // CRITICAL-3: Log only the message type, never the raw content which may contain
             // user-sensitive data (text results, device names, etc.).
             Log.i(TAG, "LiquidIsland: msg=$msgType received")
             when (msgType) {
-                "phase_change" -> {
-                    val toPhase = content["to_phase"]?.jsonPrimitive?.content
-                    if (toPhase != null) applyPhaseChange(toPhase)
-                }
                 "task_done" -> {
                     // LIQUID-ISLAND: halo pulse + double-tap haptic
                     val deviceName = content["device_name"]?.jsonPrimitive?.content ?: "设备"
                     Log.i(TAG, "LiquidIsland: task done on $deviceName")
                     triggerHaptic(this, HapticType.TASK_DONE)
-                    _pulseTrigger.value += 1
                     pushIslandItem(
                         IslandItem(
                             id = "task_done_${System.currentTimeMillis()}",
@@ -637,24 +572,10 @@ class GalaxyWearApplication : Application() {
                             )
                         )
                     }
-                    _pulseTrigger.value += 1
                 }
             }
         } catch (e: Exception) {
             Log.e(TAG, "LiquidIsland: handleLiquidEvent error: ${e.message}")
-        }
-    }
-
-    // PR-WEAR-PHASE-SYNC: apply a tri-state phase transition to the watch UI.
-    // Shared by the liquid_event "phase_change" branch and the V2 cross-device
-    // state_event fallback, so both wire formats drive the same SILENT/LIMINAL/
-    // MANIFEST ring + haptic + halo pulse.
-    private fun applyPhaseChange(toPhase: String) {
-        val oldPhase = _phase.value
-        _phase.value = PhaseAuthority.fromDesktop(toPhase)
-        if (oldPhase != _phase.value) {
-            triggerHaptic(this, HapticType.PHASE_CHANGE)
-            _pulseTrigger.value += 1 // trigger halo pulse
         }
     }
 
@@ -1146,7 +1067,7 @@ class GalaxyWearApplication : Application() {
         super.onTerminate()
     }
 
-    // W3-FIX: Always disconnect on low memory regardless of phase
+    // W3-FIX: Always disconnect on low memory
     // to prevent Activity leaks and resource exhaustion.
     override fun onLowMemory() {
         super.onLowMemory()

@@ -22,7 +22,7 @@ import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.galaxy.wear.auth.PairClaimClient
-import com.galaxy.wear.domain.model.Phase
+import com.galaxy.wear.domain.HomeStatus
 import com.galaxy.wear.service.GalaxyWearService
 import com.galaxy.wear.ui.screens.PairClaimScreen
 import com.galaxy.wear.ui.screens.CallScreen
@@ -149,8 +149,10 @@ class MainActivity : ComponentActivity() {
                 DisposableEffect(pairClaimClient) {
                     onDispose { pairClaimClient.dispose() }
                 }
-                val phase by app.phase.collectAsState()
+                val connection by app.connectionState.collectAsState()
+                val needsRepair by app.needsRepair.collectAsState()
                 val islandItems by app.islandItems.collectAsState()
+                val homeStatus = HomeStatus.of(connection, needsRepair, pending = islandItems.size)
                 // W4-FIX: Read ambient state to control animations
                 val ambient by isAmbient
 
@@ -166,13 +168,14 @@ class MainActivity : ComponentActivity() {
                     ) {
                         composable("home") {
                             HomeScreen(
-                                phase = phase,
+                                status = homeStatus,
                                 isAmbient = ambient,
                                 onDevices = { navController.navigate("agents") },
                                 onVoice = { navController.navigate("voice") },
                                 onCall = { navController.navigate("call") },
                                 onConversation = { navController.navigate("conversation") },
                                 onSettings = { navController.navigate("settings") },
+                                onRepair = { navController.navigate("auth") },
                                 islandItems = islandItems,
                             )
                         }

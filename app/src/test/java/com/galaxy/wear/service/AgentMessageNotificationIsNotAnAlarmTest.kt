@@ -16,8 +16,7 @@ import org.junit.Test
  * 代价是免打扰：`CATEGORY_ALARM` 会让系统在深夜也放行，一条"快递到了"就能把人吵醒。
  *
  * 这条守卫判读源码本身，而不是起 Android 运行时：要钉的是**声明**（用了哪条渠道、
- * 报了哪个类别），运行期行为要真机才能证，那不是单测该承诺的事 —— 与
- * `PhaseVisualIsTheSingleAuthorityTest` 的做法一致。
+ * 报了哪个类别），运行期行为要真机才能证，那不是单测该承诺的事。
  */
 class AgentMessageNotificationIsNotAnAlarmTest {
 
