@@ -1,5 +1,11 @@
 package com.galaxy.wear.ui.screens
 
+import android.app.Activity
+import android.content.Intent
+import android.speech.RecognizerIntent
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
@@ -27,6 +33,7 @@ import com.galaxy.wear.ui.triggerHaptic
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
+import com.galaxy.wear.domain.DecisionIslandIds
 import com.galaxy.wear.domain.HomeStatus
 import com.galaxy.wear.domain.StatusTone
 import com.galaxy.wear.ui.theme.*
@@ -63,6 +70,18 @@ fun HomeScreen(
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
     val app = context.applicationContext as com.galaxy.wear.GalaxyWearApplication
+
+    // 决策卡上的「语音回复」要回答**这条决策**。系统识别界面是另一个 Activity，回来时靠这里记着
+    // 当时在回答哪一条。
+    var answeringDecision by remember { mutableStateOf<String?>(null) }
+    val speech = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val decisionId = answeringDecision
+        answeringDecision = null
+        val text = if (result.resultCode == Activity.RESULT_OK) {
+            result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+        } else null
+        if (decisionId != null && !text.isNullOrBlank()) app.answerDecisionByVoice(decisionId, text)
+    }
 
     Scaffold(
         vignette = { Vignette(vignettePosition = VignettePosition.TopAndBottom) },
@@ -227,7 +246,25 @@ fun HomeScreen(
         com.galaxy.wear.ui.components.DynamicIsland(
             items = islandItems,
             statusText = status.label,
-            onVoiceReply = onVoice,
+            onVoiceReply = {
+                val decisionId = islandItems.firstOrNull()?.let { DecisionIslandIds.decisionIdOf(it.id) }
+                if (decisionId == null) {
+                    onVoice() // 不是决策卡：回到通用语音页
+                } else {
+                    answeringDecision = decisionId
+                    try {
+                        speech.launch(
+                            Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                            }
+                        )
+                    } catch (e: Exception) {
+                        answeringDecision = null
+                        Toast.makeText(context, "语音识别不可用，请点选项回答", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
             // Dismissing (tap outside / "关闭") only closes the expanded
             // overlay by default - without this, the same item would
             // still be in app.islandItems and pop right back up next

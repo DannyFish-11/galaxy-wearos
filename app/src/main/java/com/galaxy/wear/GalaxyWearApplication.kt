@@ -15,9 +15,9 @@ import com.galaxy.wear.data.AIPClient
 import com.galaxy.wear.data.AIPConnectionState
 import com.galaxy.wear.data.AIPMessage
 import com.ufo.galaxy.shared.protocol.MsgType
+import com.galaxy.wear.domain.DecisionIslandIds
 import com.galaxy.wear.domain.DeviceRepository
 import com.galaxy.wear.domain.model.Device
-import com.galaxy.wear.network.TailscaleAdapter
 import com.galaxy.wear.network.isWifiAvailable
 import com.ufo.galaxy.network.GatewayDiscovery
 import com.ufo.galaxy.transport.AipTransportManager
@@ -246,7 +246,6 @@ class GalaxyWearApplication : Application() {
     // 是同一件事的两份实现：同一个服务类型、同一个尾点坑、同一套 listener 清理。
     // 两份就意味着补丁只打在一边 —— 现在共用同一份。
     private val gatewayDiscovery by lazy { GatewayDiscovery(this) }
-    private val tailscaleAdapter by lazy { TailscaleAdapter(this) }
 
     /**
      * 凭据存储是否已降级为明文（[encryptedPrefs] 初始化失败）。
@@ -746,6 +745,8 @@ class GalaxyWearApplication : Application() {
             // decisionId.hashCode()。不一致就收不掉,而且收不掉这件事没有任何报错。
             androidx.core.app.NotificationManagerCompat.from(this)
                 .cancel(decisionId.hashCode())
+            // 岛上那张决策卡也要一并收掉：别处已经答了，这里再点选项只会答一个已落定的决策。
+            dismissIslandItem(DecisionIslandIds.islandId(decisionId))
         } catch (e: Exception) {
             Log.w(TAG, "撤回决策通知失败: ${e.message}")
         }
@@ -776,7 +777,7 @@ class GalaxyWearApplication : Application() {
 
             pushIslandItem(
                 IslandItem(
-                    id = "decision_$decisionId",
+                    id = DecisionIslandIds.islandId(decisionId),
                     title = title,
                     summary = summary,
                     source = "OpenClawd",
@@ -795,6 +796,11 @@ class GalaxyWearApplication : Application() {
      * Mirrors ReplyReceiver's notification-action reply path exactly, so both
      * entry points produce the same wire message.
      */
+    /** 决策卡上说出来的回答（系统语音识别的结果）。回答的是这条决策，经同一条线上行。 */
+    fun answerDecisionByVoice(decisionId: String, text: String) {
+        replyToDecision(decisionId, voiceInput = text)
+    }
+
     private fun replyToDecision(decisionId: String, selectedOption: String? = null, voiceInput: String? = null) {
         appScope.launch {
             try {
@@ -810,7 +816,7 @@ class GalaxyWearApplication : Application() {
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to send human input (in-app): ${e.message}")
             } finally {
-                dismissIslandItem("decision_$decisionId")
+                dismissIslandItem(DecisionIslandIds.islandId(decisionId))
             }
         }
     }
@@ -954,12 +960,12 @@ class GalaxyWearApplication : Application() {
     }
 
     // -----------------------------------------------------------------
-    // NETWORK DISCOVERY: Tailscale + mDNS LAN auto-discovery
+    // NETWORK DISCOVERY: mDNS LAN auto-discovery
     // -----------------------------------------------------------------
 
     /**
-     * Auto-discover gateway using mDNS (same Wi-Fi) or Tailscale (VPN).
-     * Priority: mDNS LAN → Tailscale scan → null
+     * Auto-discover gateway using mDNS (same Wi-Fi). Out-of-home reachability comes from the
+     * candidates handed over at pairing, not from discovery.
      */
     suspend fun discoverGateway(): String? {
         // WARNING-9: Reuse cached discovery instances instead of creating new ones each call.
@@ -977,18 +983,11 @@ class GalaxyWearApplication : Application() {
             }
         }
 
-        // 2. Try Tailscale network discovery
-        if (tailscaleAdapter.isInTailscaleNetwork()) {
-            Log.i(TAG, "Discovery: trying Tailscale...")
-            val tsIp = tailscaleAdapter.autoDiscoverGateway()
-            if (tsIp != null) {
-                val url = tailscaleAdapter.buildWsUrl(tsIp)
-                Log.i(TAG, "Discovery: found via Tailscale: $url")
-                return url
-            }
-        }
+        // 手表上没有「Tailscale 网段扫描」这一步：它进 tailnet 靠 App 里的转发进程，不是系统 VPN，
+        // 系统网卡上永远看不到 100.x 地址，扫网段没有东西可扫。出门直连走配对时拿到的候选地址
+        // （见 ConnectionPathPlanner / TailnetDaemon），不是靠发现。
 
-        Log.w(TAG, "Discovery: no gateway found (mDNS and Tailscale both failed)")
+        Log.w(TAG, "Discovery: no gateway found via mDNS")
         return null
     }
 
@@ -1067,30 +1066,15 @@ class GalaxyWearApplication : Application() {
         super.onTerminate()
     }
 
-    // W3-FIX: Always disconnect on low memory
-    // to prevent Activity leaks and resource exhaustion.
+    // 内存紧张时**不**断开到智能体的连接。
+    //
+    // 以前这里主动 disconnect()，理由是「防泄漏」。可这条连接就是手表存在的全部意义：断了之后
+    // 智能体的提问、下发的动作都送不到，而且要等下一次「满足条件的网络事件」才会重连
+    // （还受自动重连次数限制）。进程挂着前台服务，系统真要回收会按优先级自己来；
+    // 一条空闲的 WebSocket 占的内存微不足道，不值得拿「联系不上智能体」去换。
     override fun onLowMemory() {
         super.onLowMemory()
-        Log.w(TAG, "onLowMemory — system under memory pressure")
-        // CRITICAL-5: Guard with isActive to avoid silent failure when scope is cancelled.
-        if (!appScope.isActive) {
-            Log.w(TAG, "appScope is cancelled — skipping low-memory disconnect")
-            return
-        }
-        // Also guard aipClient access to prevent UninitializedPropertyAccessException.
-        if (!isAipClientReady()) {
-            Log.w(TAG, "AIPClient not initialized — skipping low-memory disconnect")
-            return
-        }
-        // Force disconnect to free resources and prevent leaks
-        appScope.launch {
-            try {
-                aipClient.disconnect()
-                Log.i(TAG, "Auto-disconnected on low memory")
-            } catch (e: Exception) {
-                Log.w(TAG, "Disconnect on low memory failed: ${e.message}")
-            }
-        }
+        Log.w(TAG, "onLowMemory — system under memory pressure (connection kept)")
     }
 
     /** Update mesh device list from gateway state-sync payload */

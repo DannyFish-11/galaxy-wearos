@@ -85,7 +85,7 @@ private fun HapticPattern.toEffect(vibrator: Vibrator): VibrationEffect {
  * 按类别发一下触觉。
  *
  * 这是**唯一**的入口:任何界面都不该自己拼 `VibrationEffect` —— 那正是原来
- * `HomeScreen` 与 `WatchButtonReceiver` 各写一份、同样是"按了一下"却一个
+ * 首页与已删掉的侧键接收器当年各写一份、同样是"按了一下"却一个
  * CLICK 一个 HEAVY_CLICK 的由来,直接违反"同类交互同一手感"。
  */
 fun triggerHaptic(context: Context, type: HapticType) {

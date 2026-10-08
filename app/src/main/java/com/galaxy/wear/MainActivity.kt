@@ -11,7 +11,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleObserver
@@ -103,7 +102,6 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
         super.onCreate(savedInstanceState)
 
         // ROUND-2-FIX + 可打扰性传感:首次启动一次性请求通知与心率权限。
@@ -134,8 +132,6 @@ class MainActivity : ComponentActivity() {
             }
         )
         lifecycle.addObserver(ambientObserver)
-
-        setTheme(android.R.style.Theme_DeviceDefault)
 
         setContent {
             GalaxyWearTheme {

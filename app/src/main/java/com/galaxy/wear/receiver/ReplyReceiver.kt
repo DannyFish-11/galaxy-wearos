@@ -63,7 +63,8 @@ class ReplyReceiver : BroadcastReceiver() {
             ?.getCharSequence(EXTRA_VOICE_INPUT)?.toString()
             ?: intent.getStringExtra(EXTRA_VOICE_INPUT)
 
-        Log.d(TAG, "Reply received: decision=$decisionId, option=$optionId, voice=$voiceInput")
+        // 只记「有没有、多长」，不记正文：用户的语音回复是私人内容，logcat 不该有一份。
+        Log.d(TAG, "Reply received: decision=$decisionId, option=$optionId, voiceChars=${voiceInput?.length ?: 0}")
 
         // ROUND-2-FIX: dismiss the decision notification after any reply —
         // action buttons don't auto-dismiss (autoCancel only applies to the
