@@ -118,6 +118,9 @@ class ReplyReceiver : BroadcastReceiver() {
      */
     private fun handleMessageReply(context: Context, intent: Intent) {
         val messageId = intent.getStringExtra(EXTRA_MESSAGE_ID).orEmpty()
+        // 这条消息属于智能体的哪条对话。回复要带着它：不带的话这句话落进手表自己的对话，
+        // 智能体那条会话里看不到你的回复。
+        val conversationId = intent.getStringExtra(EXTRA_CONVERSATION_ID).orEmpty()
         val replyText = androidx.core.app.RemoteInput.getResultsFromIntent(intent)
             ?.getCharSequence(EXTRA_VOICE_INPUT)?.toString()
             ?: intent.getStringExtra(EXTRA_VOICE_INPUT)
@@ -142,7 +145,7 @@ class ReplyReceiver : BroadcastReceiver() {
                     Log.e(TAG, "AIPClient 未就绪 —— 这句回复发不出去")
                     return@launch
                 }
-                app.aipClient.sendVoiceQuery(replyText)
+                app.aipClient.sendVoiceQuery(replyText, sessionId = conversationId)
                 Log.i(TAG, "消息回复已发出: message=$messageId")
             } catch (e: Exception) {
                 Log.e(TAG, "消息回复发送失败: ${e.message}")

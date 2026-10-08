@@ -89,13 +89,23 @@ private fun HapticPattern.toEffect(vibrator: Vibrator): VibrationEffect {
  * CLICK 一个 HEAVY_CLICK 的由来,直接违反"同类交互同一手感"。
  */
 fun triggerHaptic(context: Context, type: HapticType) {
-    val vibrator = context.vibratorCompat() ?: return
-    if (!vibrator.hasVibrator()) return
+    playHaptic(context, type)
+}
+
+/**
+ * 同 [triggerHaptic],但如实说「震了没有」。智能体下发的 `haptic` 动作要据此回报成功或失败 ——
+ * 没有振动器 / 系统拒绝时回「已完成」是在骗它。
+ */
+fun playHaptic(context: Context, type: HapticType): Boolean {
+    val vibrator = context.vibratorCompat() ?: return false
+    if (!vibrator.hasVibrator()) return false
     val pattern = HapticVocabulary.patternFor(type)
-    try {
+    return try {
         vibrator.vibrate(pattern.toEffect(vibrator))
+        true
     } catch (e: Exception) {
         Log.w(TAG, "触觉播放失败(非致命): ${e.message}")
+        false
     }
 }
 

@@ -64,6 +64,18 @@ internal object AipPureLogic {
     }
 
     /**
+     * `voice_query` 命令的内层载荷。
+     *
+     * `session_id` 只在有值时才带:网关读 `payload.session_id`,空串会被当成「没带」,
+     * 但不带比带空串更诚实 —— 老网关可能把空串当成一个真的会话号。
+     */
+    internal fun voiceQueryPayload(text: String, sessionId: String): JsonObject = buildJsonObject {
+        put("text", text)
+        put("source", "wear_os")
+        if (sessionId.isNotBlank()) put("session_id", sessionId)
+    }
+
+    /**
      * DEVICE: 解析设备列表响应。
      *
      * 整份解析是**尽力而为**:任何一处缺字段都回落到占位值,整体解析失败回空表。

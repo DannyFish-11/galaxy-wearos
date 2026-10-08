@@ -35,7 +35,7 @@ class AgentMessageNotificationIsNotAnAlarmTest {
     }
 
     private val service: String by lazy {
-        source("src/main/java/com/galaxy/wear/service/GalaxyWearService.kt")
+        source("src/main/java/com/galaxy/wear/service/WatchNotifications.kt")
     }
 
     /** 只取 showAgentMessageNotification 那一段，避免把决策通知的声明算进来。 */

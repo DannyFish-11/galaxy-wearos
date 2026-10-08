@@ -12,19 +12,14 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import androidx.core.app.RemoteInput
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.galaxy.wear.GalaxyWearApplication
 import com.galaxy.wear.MainActivity
 import com.galaxy.wear.domain.model.Phase
-import com.galaxy.wear.domain.pairOptionLabels
-import com.galaxy.wear.receiver.ReplyReceiver
 import com.galaxy.wear.sensing.InterruptibilityMonitor
 import com.galaxy.wear.sensing.InterruptibilityReport
 import com.galaxy.wear.sensing.InterruptibilityUplinkPolicy
-import com.galaxy.wear.ui.HapticType
-import com.galaxy.wear.ui.HapticVocabulary
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -45,40 +40,22 @@ class GalaxyWearService : LifecycleService() {
 
     companion object {
         const val CHANNEL_ID = "galaxy_wear"
-        /** ROUND-2-FIX: HITL 决策通知专用高重要性渠道。原实现把决策通知发到
-         * 常驻服务用的 IMPORTANCE_LOW 渠道 —— Android O+ 上渠道重要性压过
-         * NotificationCompat 的 setPriority/setVibrate,导致决策提醒无声无振
-         * 无抬头,用户永远注意不到"需要人工决策"。 */
-        const val CHANNEL_ID_DECISIONS = "galaxy_wear_decisions"
         const val NOTIFICATION_ID = 1
         const val ACTION_DISCONNECT = "com.galaxy.wear.DISCONNECT"
-        // HITL: raise a decision notification from an incoming decision_request.
-        const val ACTION_SHOW_DECISION = "com.galaxy.wear.SHOW_DECISION"
-        const val EXTRA_DECISION_ID = "decision_id"
-        const val EXTRA_DECISION_TITLE = "decision_title"
-        const val EXTRA_DECISION_SUMMARY = "decision_summary"
-        const val EXTRA_DECISION_OPTIONS = "decision_options"
-        /** 与 EXTRA_DECISION_OPTIONS 一一对应的**显示文字**。
-         *  只传 id 的话,手腕上的按钮印的是 `approve`/`deny` 这种协议字面量。 */
-        const val EXTRA_DECISION_LABELS = "decision_labels"
         /**
-         * 智能体主动发来的消息用的渠道。
-         *
-         * 刻意**不**复用决策渠道:那条是 IMPORTANCE_HIGH + CATEGORY_ALARM,
-         * 语义是"停下手里的事,等你拿主意"。一条普通消息用闹钟的手感推过来,
-         * 用户不看屏幕就分不出哪条是真要他决定的 —— 而那恰恰是决策渠道存在的理由。
-         * 这条按平常手表消息的规格走:DEFAULT 重要性、消息类别、消息到达的触感。
+         * 拉起常驻服务。**只在应用处于前台时可靠**(首次启动、配对完成、用户点开通知) ——
+         * Android 12+ 不许后台应用启动前台服务,抛 `ForegroundServiceStartNotAllowedException`。
+         * 所以失败是预期内的情况,返回 false 由调用方决定怎么办,不在这里吞成一行日志。
          */
-        const val CHANNEL_ID_MESSAGES = "galaxy_wear_messages"
-
-        /** 智能体主动发来一条消息(AIP agent_message)。 */
-        const val ACTION_SHOW_MESSAGE = "com.galaxy.wear.SHOW_MESSAGE"
-        const val EXTRA_MESSAGE_ID = "message_id"
-        const val EXTRA_MESSAGE_TEXT = "message_text"
-        const val EXTRA_MESSAGE_TITLE = "message_title"
-        const val EXTRA_CONVERSATION_ID = "conversation_id"
-        /** 是否在通知上给出直接回复入口(协议里的 reply_expected)。 */
-        const val EXTRA_REPLY_EXPECTED = "reply_expected"
+        fun start(context: Context): Boolean = try {
+            androidx.core.content.ContextCompat.startForegroundService(
+                context, Intent(context, GalaxyWearService::class.java)
+            )
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "常驻服务没拉起来: ${e.message}")
+            false
+        }
 
         const val TAG = "GalaxyWearService"
 
@@ -134,33 +111,6 @@ class GalaxyWearService : LifecycleService() {
         // isRunning only guards observer launch, not the foreground notification.
         startForeground()
 
-        // HITL: raise a decision notification from an incoming decision_request.
-        if (intent?.action == ACTION_SHOW_DECISION) {
-            val decisionId = intent.getStringExtra(EXTRA_DECISION_ID)
-            if (decisionId != null) {
-                showDecisionNotification(
-                    title = intent.getStringExtra(EXTRA_DECISION_TITLE) ?: "需要你的决定",
-                    summary = intent.getStringExtra(EXTRA_DECISION_SUMMARY) ?: "",
-                    decisionId = decisionId,
-                    options = intent.getStringArrayListExtra(EXTRA_DECISION_OPTIONS) ?: emptyList(),
-                    labels = intent.getStringArrayListExtra(EXTRA_DECISION_LABELS) ?: emptyList(),
-                )
-            }
-        }
-
-        if (intent?.action == ACTION_SHOW_MESSAGE) {
-            val text = intent.getStringExtra(EXTRA_MESSAGE_TEXT).orEmpty()
-            if (text.isNotBlank()) {
-                showAgentMessageNotification(
-                    text = text,
-                    title = intent.getStringExtra(EXTRA_MESSAGE_TITLE).orEmpty(),
-                    messageId = intent.getStringExtra(EXTRA_MESSAGE_ID).orEmpty(),
-                    conversationId = intent.getStringExtra(EXTRA_CONVERSATION_ID).orEmpty(),
-                    replyExpected = intent.getBooleanExtra(EXTRA_REPLY_EXPECTED, false),
-                )
-            }
-        }
-
         synchronized(this) {
             if (!isRunning) {
                 isRunning = true
@@ -196,43 +146,10 @@ class GalaxyWearService : LifecycleService() {
                 setShowBadge(false)
             }
             nm.createNotificationChannel(channel)
-            // ROUND-2-FIX: separate HIGH-importance channel for HITL decisions so
-            // they actually alert (sound/vibration/heads-up) instead of inheriting
-            // the silent LOW importance of the persistent-service channel.
-            val decisionChannel = NotificationChannel(
-                CHANNEL_ID_DECISIONS,
-                "Galaxy 决策提醒",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "OpenClawd 需要人工决策时的提醒"
-                enableVibration(true)
-                // 让全表最重要的那一类真的用上词汇表里的"等距三拍"。
-                // Android O+ 上振动由**渠道**决定,Builder 上的 setVibrate 会被忽略 ——
-                // 不接这一行的话,决策提醒用的是系统默认振动,与"消息到达"手感一样,
-                // 用户不看屏幕就分不出"有条消息"和"等你拿主意"。
-                vibrationPattern = HapticVocabulary
-                    .patternFor(HapticType.DECISION_PROMPT)
-                    .toWaveformTimings()
-            }
-            nm.createNotificationChannel(decisionChannel)
-
-            // 智能体主动发来的消息。DEFAULT 而不是 HIGH:它该像平常手表上那种消息
-            // 推送,不该是闹钟 —— 决策渠道的那份"等距三拍"要留给真正需要拿主意的事。
-            val messageChannel = NotificationChannel(
-                CHANNEL_ID_MESSAGES,
-                "Galaxy 消息",
-                NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                description = "智能体发来的消息"
-                enableVibration(true)
-                // Android O+ 上振动由**渠道**决定,Builder 上的 setVibrate 被忽略。
-                // 用词汇表里那条早就定义好、却从来没有东西产生过的 MESSAGE_ARRIVAL。
-                vibrationPattern = HapticVocabulary
-                    .patternFor(HapticType.MESSAGE_ARRIVAL)
-                    .toWaveformTimings()
-            }
-            nm.createNotificationChannel(messageChannel)
         }
+        // 决策 / 消息两条渠道归通知这一层管(Application 收到决策时不经服务直接弹)；这里补建一次，
+        // 保证服务起来之前渠道就在。
+        WatchNotifications.ensureChannels(this)
     }
 
     // ------------------------------------------------------------------
@@ -285,7 +202,16 @@ class GalaxyWearService : LifecycleService() {
         )
 
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                // Android 14+:用 specialUse。dataSync 在 Android 15 起每 24 小时只许跑 6 小时,
+                // 到点系统调 onTimeout,服务不停就抛 RemoteServiceException 把整个应用崩掉;
+                // 而且 BOOT_COMPLETED 接收器不许启动 dataSync。这个服务的本职是「常驻、
+                // 保持到网关的连接」,正好是 dataSync 的限制要挡的那种用法。
+                startForeground(
+                    NOTIFICATION_ID, notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                )
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
                     NOTIFICATION_ID, notification,
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
@@ -296,6 +222,18 @@ class GalaxyWearService : LifecycleService() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start foreground: ${e.message}")
         }
+    }
+
+    /**
+     * 前台服务类型到期(Android 15+ 的 dataSync / mediaProcessing 才会走到这里)。
+     *
+     * 系统给几秒让服务自己停,不停就抛 `RemoteServiceException`、整个应用崩。
+     * 本服务在 Android 14+ 用的是 specialUse(没有这个期限),所以正常到不了这里;
+     * 留着是因为「到不了」是对平台规则的判断,不是保证 —— 真到了,干净地停比崩好。
+     */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.w(TAG, "前台服务类型到期(startId=$startId type=$fgsType),停止常驻服务")
+        stopGracefully()
     }
 
     private fun observePhaseChanges() {
@@ -428,134 +366,5 @@ class GalaxyWearService : LifecycleService() {
         val notification = buildNotification(title = text)
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIFICATION_ID, notification)
-    }
-
-    // ── HUMAN-DECISION: 决策通知（OpenClawd 需要人类确认） ──────────
-
-    /**
-     * 显示决策通知 — OpenClawd 需要人类确认时调用。
-     *
-     * 构建 Wear OS 优化的高优先级通知，包含快捷选项按钮和语音输入。
-     * 所有回复通过 ReplyReceiver 捕获并经由 AIPClient 发送到 Mesh 网络。
-     */
-    fun showDecisionNotification(
-        title: String,
-        summary: String,
-        decisionId: String,
-        options: List<String>,
-        labels: List<String> = emptyList(),
-    ) {
-        val context = this
-
-        val replyIntent = Intent(context, ReplyReceiver::class.java).apply {
-            action = ReplyReceiver.ACTION_REPLY
-            putExtra(ReplyReceiver.EXTRA_DECISION_ID, decisionId)
-        }
-        val replyPending = PendingIntent.getBroadcast(
-            context, decisionId.hashCode(), replyIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val wearableExtender = NotificationCompat.WearableExtender()
-            .setHintShowBackgroundOnly(false)
-
-        // 按钮**显示** label、**回传** id。此前两者都用 id,于是手腕上印的是
-        // `approve`/`deny` 这种协议字面量 —— 一个瞟一眼就要按下去的界面,
-        // 却要求用户先认识协议。
-        pairOptionLabels(options, labels).forEach { option ->
-            val optionIntent = Intent(context, ReplyReceiver::class.java).apply {
-                action = ReplyReceiver.ACTION_REPLY
-                putExtra(ReplyReceiver.EXTRA_DECISION_ID, decisionId)
-                putExtra(ReplyReceiver.EXTRA_OPTION_ID, option.id)
-            }
-            val optionPending = PendingIntent.getBroadcast(
-                context, (decisionId + option.id).hashCode(), optionIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            wearableExtender.addAction(NotificationCompat.Action(
-                android.R.drawable.ic_menu_send, option.label, optionPending
-            ))
-        }
-
-        val remoteInput = RemoteInput.Builder(ReplyReceiver.EXTRA_VOICE_INPUT)
-            .setLabel("语音回复...")
-            .setAllowFreeFormInput(true)
-            .build()
-        val replyAction = NotificationCompat.Action.Builder(
-            android.R.drawable.ic_btn_speak_now, "回复", replyPending
-        ).addRemoteInput(remoteInput).build()
-        wearableExtender.addAction(replyAction)
-
-        val builder = NotificationCompat.Builder(this, CHANNEL_ID_DECISIONS)
-            .setContentTitle("⚠ $title")
-            .setContentText(summary)
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
-            // 同一份词汇表,不再写一串与渠道对不上的魔数。
-            .setVibrate(HapticVocabulary.patternFor(HapticType.DECISION_PROMPT).toWaveformTimings())
-            .setAutoCancel(true)
-            .extend(wearableExtender)
-
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(decisionId.hashCode(), builder.build())
-    }
-
-    /**
-     * 智能体主动发来的一条消息 —— 就是平常手表上那种消息推送。
-     *
-     * 与决策通知的三处刻意不同:
-     *
-     *  · 渠道是 [CHANNEL_ID_MESSAGES](DEFAULT 重要性),不是决策那条 HIGH ——
-     *    一条普通消息不该用闹钟的手感;
-     *  · 类别是 `CATEGORY_MESSAGE` 而不是 `CATEGORY_ALARM` —— 系统据此决定
-     *    免打扰时段怎么处理它,把消息报成闹钟会在深夜把人吵醒;
-     *  · 只在协议说了 `reply_expected` 时才给回复入口。每条消息都挂一个回复框,
-     *    会让"只是告诉你一声"的那些也显得在等你答话。
-     *
-     * 通知 id 用 [messageId] 的哈希:同一条消息补发时覆盖而不是再弹一条。
-     */
-    fun showAgentMessageNotification(
-        text: String,
-        title: String,
-        messageId: String,
-        conversationId: String,
-        replyExpected: Boolean,
-    ) {
-        val builder = NotificationCompat.Builder(this, CHANNEL_ID_MESSAGES)
-            .setContentTitle(title.ifBlank { "Galaxy" })
-            .setContentText(text)
-            // 手表屏幕窄,长消息不展开就只剩第一行。
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-            .setSmallIcon(android.R.drawable.ic_dialog_email)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            .setAutoCancel(true)
-
-        if (replyExpected) {
-            val replyIntent = Intent(this, ReplyReceiver::class.java).apply {
-                action = ReplyReceiver.ACTION_MESSAGE_REPLY
-                putExtra(ReplyReceiver.EXTRA_MESSAGE_ID, messageId)
-                putExtra(ReplyReceiver.EXTRA_CONVERSATION_ID, conversationId)
-            }
-            val replyPending = PendingIntent.getBroadcast(
-                this, messageId.hashCode(), replyIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            val remoteInput = RemoteInput.Builder(ReplyReceiver.EXTRA_VOICE_INPUT)
-                .setLabel("回复...")
-                .setAllowFreeFormInput(true)
-                .build()
-            builder.extend(
-                NotificationCompat.WearableExtender().addAction(
-                    NotificationCompat.Action.Builder(
-                        android.R.drawable.ic_btn_speak_now, "回复", replyPending
-                    ).addRemoteInput(remoteInput).build()
-                )
-            )
-        }
-
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(messageId.hashCode(), builder.build())
     }
 }

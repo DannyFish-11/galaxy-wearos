@@ -31,6 +31,9 @@
     <!-- Foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- 常驻服务在 Android 14+ 用 specialUse:dataSync 在 Android 15 起每 24 小时只许跑 6 小时
+         (到点不停服务就崩),且不许从 BOOT_COMPLETED 启动。见 GalaxyWearService.startForeground。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- 通话期间的麦克风型前台服务。Android 14 起后台访问麦克风必须有这一条,
          否则表现是「抬手看表能说话,手一放下 AI 就听不见了」,而且不报任何错。 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
@@ -123,9 +126,14 @@
         <service
             android:name=".service.GalaxyWearService"
             android:exported="false"
-            android:foregroundServiceType="dataSync"
-            android:stopWithTask="false"
-            android:persistent="true" />
+            android:foregroundServiceType="dataSync|specialUse"
+            android:stopWithTask="false">
+            <!-- specialUse 必须声明用途。这个服务做的事:保持一条到用户自己网关的长连接,接收智能体的
+                 提问与消息、回传用户的回答。不属于系统预设的任何一类前台服务。 -->
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="persistent_connection_to_user_gateway" />
+        </service>
 
         <!-- BroadcastReceiver for boot and package replacement events.
              Android 8+ forbids Services from receiving BOOT_COMPLETED directly.

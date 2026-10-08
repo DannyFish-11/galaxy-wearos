@@ -31,6 +31,6 @@ class AgentMessageTitleReachesTheNotificationTest {
     @Test
     fun `the notification reads the title from that payload`() {
         val app = src("com/galaxy/wear/GalaxyWearApplication.kt")
-        assertTrue(app.contains("EXTRA_MESSAGE_TITLE, payload[\"title\"]"))
+        assertTrue(app.contains("title = payload[\"title\"]"))
     }
 }

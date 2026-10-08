@@ -8,7 +8,7 @@ import android.net.NetworkCapabilities
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
-import com.galaxy.wear.service.GalaxyWearService
+import com.galaxy.wear.service.WatchNotifications
 import com.ufo.galaxy.shared.protocol.DeviceIdProvider
 import com.galaxy.wear.auth.PairClaimClient
 import com.galaxy.wear.data.AIPClient
@@ -24,9 +24,13 @@ import com.galaxy.wear.network.isWifiAvailable
 import com.ufo.galaxy.network.GatewayDiscovery
 import com.ufo.galaxy.transport.AipTransportManager
 import com.galaxy.wear.tile.GalaxyTileService
+import com.galaxy.wear.domain.AgentCommandExecutor
+import com.galaxy.wear.domain.AgentCommandParser
+import com.galaxy.wear.domain.WatchEffects
 import com.galaxy.wear.domain.parseDecisionOptions
 import com.galaxy.wear.ui.components.IslandItem
 import com.galaxy.wear.ui.HapticType
+import com.galaxy.wear.ui.playHaptic
 import com.galaxy.wear.ui.triggerHaptic
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -69,6 +73,8 @@ class GalaxyWearApplication : Application() {
         private const val KEY_SERVER_URL = "server_url"
         /** P2-FIX: Maximum auto-reconnect attempts to prevent infinite reconnect loops. */
         private const val MAX_RECONNECT_ATTEMPTS = 20
+        /** 到达上限后，网络事件触发的自动重连降为最多这么久一次（而不是永久放弃）。 */
+        private const val SLOW_RECONNECT_INTERVAL_MS = 10L * 60 * 1000
     }
 
     /**
@@ -152,6 +158,7 @@ class GalaxyWearApplication : Application() {
 
     // P2-FIX: Auto-reconnect attempt counter to prevent infinite reconnect loops.
     private var reconnectAttempts = 0
+    private var lastNetworkReconnectMs = 0L
 
     /** 配对客户端 —— 令牌与候选路径都存在它那儿。 */
     private val pairClaimClient by lazy { PairClaimClient(this) }
@@ -382,6 +389,13 @@ class GalaxyWearApplication : Application() {
                         }
                         lastAttemptedUrl?.let { rememberWorkingPath(it) }
                     }
+                    // 认证通过后顺手把令牌养新：之后的重连要用它，而过期了就只能重新配对。
+                    if (state == AIPConnectionState.AUTHENTICATED) {
+                        appScope.launch {
+                            val saved = encryptedPrefs.getString(KEY_AUTH_TOKEN, "").orEmpty()
+                            if (saved.isNotEmpty()) freshToken(saved)
+                        }
+                    }
                     // 连接态**不再**判定 LIMINAL/MANIFEST —— 那是桌面的属性。
                     // 规则本身在 PhaseAuthority 里（可单测），这里只负责应用它。
                     val linkUp = state == AIPConnectionState.CONNECTED ||
@@ -413,13 +427,21 @@ class GalaxyWearApplication : Application() {
             networkCallback = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
                     val caps = cm.getNetworkCapabilities(network)
-                    val hasInternet = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+                    // 看 INTERNET 而不是 VALIDATED：onAvailable 的这一刻新网络多半还没验证完；
+                    // 而网关常常就在没有外网出口的家庭局域网里，那种网络永远不会被判定为 VALIDATED，
+                    // 于是回到家连上 Wi-Fi 也永远不触发重连。
+                    val hasInternet = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
                     if (hasInternet && _connectionState.value == AIPConnectionState.DISCONNECTED) {
-                        // P2-FIX: Enforce maximum reconnect attempts to prevent infinite loops
-                        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-                            Log.e(TAG, "Max reconnect attempts ($MAX_RECONNECT_ATTEMPTS) reached, giving up auto-reconnect")
+                        // P2-FIX: 失败次数多了就放慢，不是放弃。以前到上限就永久放弃——重置要靠
+                        // 「连接成功」，而成功要先重连，所以放弃之后只能靠用户去设置里手动连。
+                        val nowMs = System.currentTimeMillis()
+                        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS &&
+                            nowMs - lastNetworkReconnectMs < SLOW_RECONNECT_INTERVAL_MS
+                        ) {
+                            Log.d(TAG, "已达 $MAX_RECONNECT_ATTEMPTS 次，降为每 10 分钟最多重连一次")
                             return
                         }
+                        lastNetworkReconnectMs = nowMs
                         reconnectAttempts++
                         Log.i(TAG, "Network available — triggering auto-reconnect (attempt $reconnectAttempts/$MAX_RECONNECT_ATTEMPTS)")
                         appScope.launch {
@@ -438,7 +460,11 @@ class GalaxyWearApplication : Application() {
                                     val target = nextConnectUrl(savedUrl)
                                     // 此处位于 appScope.launch 内,裸 this 指向 CoroutineScope;
                                     // getOrCreateDeviceId 需要 Context,故显式限定为 Application。
-                                    aipClient.connect(target, savedToken, DeviceIdProvider.getOrCreateDeviceId(this@GalaxyWearApplication))
+                                    aipClient.connect(
+                                        target,
+                                        freshToken(savedToken),
+                                        DeviceIdProvider.getOrCreateDeviceId(this@GalaxyWearApplication),
+                                    )
                                 }
                             } catch (e: CancellationException) {
                                 Log.d(TAG, "Auto-reconnect cancelled")
@@ -496,6 +522,7 @@ class GalaxyWearApplication : Application() {
                             MsgType.DECISION_WITHDRAW -> handleDecisionWithdraw(msg)
                             MsgType.AGENT_MESSAGE -> handleAgentMessage(msg)
                             MsgType.EXECUTION_PROPOSAL -> handleExecutionProposal(msg)
+                            MsgType.COMMAND -> handleAgentCommand(msg)
                             else -> {} // Ignore other types
                         }
                     }
@@ -656,20 +683,17 @@ class GalaxyWearApplication : Application() {
             val conversationId = payload["conversation_id"]?.jsonPrimitive?.content.orEmpty()
             Log.i(TAG, "AgentMessage: id=$messageId len=${text.length}")
 
-            val intent = android.content.Intent(this, GalaxyWearService::class.java).apply {
-                action = GalaxyWearService.ACTION_SHOW_MESSAGE
-                putExtra(GalaxyWearService.EXTRA_MESSAGE_ID, messageId)
-                putExtra(GalaxyWearService.EXTRA_MESSAGE_TEXT, text)
-                putExtra(GalaxyWearService.EXTRA_MESSAGE_TITLE, payload["title"]?.jsonPrimitive?.content.orEmpty())
-                putExtra(GalaxyWearService.EXTRA_CONVERSATION_ID, conversationId)
+            // 直接弹通知(原因同 handleDecisionRequest：后台不能启动前台服务)。
+            WatchNotifications.showAgentMessageNotification(
+                context = this,
+                text = text,
+                title = payload["title"]?.jsonPrimitive?.content.orEmpty(),
+                messageId = messageId,
+                conversationId = conversationId,
                 // 只有协议说了期待回复,通知上才给回复入口 —— 每条都挂一个回复框,
                 // 会让"只是告诉你一声"的那些也显得在等你答话。
-                putExtra(
-                    GalaxyWearService.EXTRA_REPLY_EXPECTED,
-                    payload["reply_expected"]?.jsonPrimitive?.content?.toBoolean() ?: false,
-                )
-            }
-            androidx.core.content.ContextCompat.startForegroundService(this, intent)
+                replyExpected = payload["reply_expected"]?.jsonPrimitive?.content?.toBoolean() ?: false,
+            )
         } catch (e: Exception) {
             Log.e(TAG, "处理 agent_message 失败: ${e.message}")
         }
@@ -741,13 +765,63 @@ class GalaxyWearApplication : Application() {
         }
     }
 
+    // ── 智能体经 devices__invoke 下发给手表的动作 ───────────────────────────
+
+    /** 手表能替智能体做的事的真正实现(通知 / 触觉 / 状态)。判定与编排在 [AgentCommandExecutor] 里，可在 JVM 上测。 */
+    private val agentCommands: AgentCommandExecutor by lazy { AgentCommandExecutor(AppWatchEffects()) }
+
+    private inner class AppWatchEffects : WatchEffects {
+        override fun notify(title: String, text: String, replyExpected: Boolean, conversationId: String): Boolean {
+            // 和智能体主动发来的 agent_message 同一条路:记进会话，再弹通知。
+            val messageId = "cmd_notify_${System.currentTimeMillis()}"
+            conversationRecorder.recordAgentMessage(text = text, conversationId = conversationId, messageId = messageId)
+            return WatchNotifications.showAgentMessageNotification(
+                context = this@GalaxyWearApplication,
+                text = text,
+                title = title,
+                messageId = messageId,
+                conversationId = conversationId,
+                replyExpected = replyExpected,
+            )
+        }
+
+        override fun haptic(type: HapticType): Boolean = playHaptic(this@GalaxyWearApplication, type)
+
+        override fun status(): JsonObject = buildJsonObject {
+            put("connection", aipClient.connectionState.value.name.lowercase())
+            put("app_version", BuildConfig.VERSION_NAME)
+            put("notifications_enabled", WatchNotifications.canNotify(this@GalaxyWearApplication))
+        }
+    }
+
+    private fun handleAgentCommand(event: AIPMessage) {
+        val frame = event.payload as? JsonObject ?: return
+        val cmd = AgentCommandParser.parse(frame)
+        if (cmd == null) {
+            // 没有 command_id 回了网关也认领不到，只能记一笔。
+            Log.w(TAG, "收到格式不对的 command 帧(缺 command_id 或 command)，忽略")
+            return
+        }
+        Log.i(TAG, "AgentCommand: id=${cmd.commandId} action=${cmd.action}")
+        appScope.launch {
+            val result = agentCommands.execute(cmd)
+            try {
+                aipClient.sendCommandResult(cmd.commandId, result.success, result.data, result.error)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "回 command_result 失败: ${e.message}")
+            }
+        }
+    }
+
     private fun handleDecisionWithdraw(event: AIPMessage) {
         try {
             val payload = event.payload as? JsonObject ?: return
             val decisionId = payload["decision_id"]?.jsonPrimitive?.content ?: return
             val reason = payload["reason"]?.jsonPrimitive?.content ?: "cancelled"
             Log.i(TAG, "DecisionWithdraw: id=$decisionId reason=$reason")
-            // 通知 id 必须和 GalaxyWearService 弹它时用的那个一致 —— 两处都是
+            // 通知 id 必须和 WatchNotifications 弹它时用的那个一致 —— 两处都是
             // decisionId.hashCode()。不一致就收不掉,而且收不掉这件事没有任何报错。
             androidx.core.app.NotificationManagerCompat.from(this)
                 .cancel(decisionId.hashCode())
@@ -767,19 +841,17 @@ class GalaxyWearApplication : Application() {
             val optionsArr = payload["options"] as? JsonArray
             val (optionIds, decisionOptions) = parseDecisionOptions(optionsArr)
             Log.i(TAG, "DecisionRequest: id=$decisionId options=${optionIds.size}")
-            val intent = android.content.Intent(this, GalaxyWearService::class.java).apply {
-                action = GalaxyWearService.ACTION_SHOW_DECISION
-                putExtra(GalaxyWearService.EXTRA_DECISION_ID, decisionId)
-                putExtra(GalaxyWearService.EXTRA_DECISION_TITLE, title)
-                putExtra(GalaxyWearService.EXTRA_DECISION_SUMMARY, summary)
-                putStringArrayListExtra(GalaxyWearService.EXTRA_DECISION_OPTIONS, ArrayList(optionIds))
+            // 直接弹通知，不经前台服务：手表在后台时 Android 12+ 不许应用启动前台服务，
+            // 以前这里去拉前台服务会抛异常、被外层 catch 吞掉，决策通知就此消失。
+            WatchNotifications.showDecisionNotification(
+                context = this,
+                title = title,
+                summary = summary,
+                decisionId = decisionId,
+                options = optionIds,
                 // 显示文字必须一并送过去 —— 只送 id 的话通知按钮印的是协议字面量。
-                putStringArrayListExtra(
-                    GalaxyWearService.EXTRA_DECISION_LABELS,
-                    ArrayList(decisionOptions.map { it.label }),
-                )
-            }
-            androidx.core.content.ContextCompat.startForegroundService(this, intent)
+                labels = decisionOptions.map { it.label },
+            )
 
             pushIslandItem(
                 IslandItem(
@@ -822,6 +894,49 @@ class GalaxyWearApplication : Application() {
         }
     }
 
+    // ── 配对令牌的续期 ───────────────────────────────────────────────────
+
+    private val _needsRepair = MutableStateFlow(false)
+
+    /**
+     * 令牌已经不能用了、需要重新配对：网关明确拒绝了续期（过期 / 已撤销 / 这块表被移除），
+     * 或者令牌已过期。界面据此提示「重新配对」，而不是静静地卡在「静默」。
+     */
+    val needsRepair: StateFlow<Boolean> = _needsRepair.asStateFlow()
+
+    /**
+     * 连接前保证令牌够新。快到期就先续；**续不了不阻塞连接**——旧令牌可能还没坏，断网时续不了
+     * 是常态。只有网关明确说不行（或令牌已过期），才标记「需要重新配对」。
+     *
+     * 只续配对得来的令牌：连接用的令牌和配对存下的不是同一枚时（比如用户在设置里手填了静态令牌），
+     * 不去动它。
+     */
+    private suspend fun freshToken(connectToken: String): String {
+        if (pairClaimClient.storedToken() != connectToken) return connectToken
+        val bases = buildList {
+            add(encryptedPrefs.getString(KEY_SERVER_URL, "").orEmpty())
+            // 续期走普通 HTTP，到不了本机转发口：tailnet 那条留给转发进程，这里只试其余候选。
+            pairClaimClient.storedCandidates().filter { it.kind != "tailscale" }.forEach { add(it.url) }
+        }
+        return when (val r = pairClaimClient.renewIfDue(bases, DeviceIdProvider.getOrCreateDeviceId(this))) {
+            is PairClaimClient.RenewResult.Renewed -> {
+                encryptedPrefs.edit().putString(KEY_AUTH_TOKEN, r.token).apply()
+                _needsRepair.value = false
+                r.token
+            }
+            PairClaimClient.RenewResult.NeedsRepair -> {
+                Log.w(TAG, "配对令牌不能用了，需要重新配对")
+                _needsRepair.value = true
+                connectToken
+            }
+            is PairClaimClient.RenewResult.Failed -> {
+                Log.w(TAG, "令牌续期这次没成(${r.reason})，沿用旧令牌")
+                connectToken
+            }
+            PairClaimClient.RenewResult.NotNeeded -> connectToken
+        }
+    }
+
     // FIX(connect): aipClient.connect() runs for the ENTIRE WebSocket session
     // lifetime — it only returns when the session ends. The previous
     // withTimeout(15_000) wrapper therefore killed every healthy session 15s
@@ -845,7 +960,7 @@ class GalaxyWearApplication : Application() {
         val devId = deviceId ?: DeviceIdProvider.getOrCreateDeviceId(this)
         appScope.launch {
             try {
-                aipClient.connect(serverUrl, token, devId)
+                aipClient.connect(serverUrl, freshToken(token), devId)
             } catch (e: CancellationException) {
                 Log.d(TAG, "Connect cancelled")
             } catch (e: Exception) {
@@ -869,6 +984,7 @@ class GalaxyWearApplication : Application() {
         }
         // 刚配完对:网关这次可能给了进 tailnet 的钥匙(或者换了网关、没给)—— 按最新的来。
         ensureTailnet()
+        _needsRepair.value = false
         try {
             encryptedPrefs.edit()
                 .putString(KEY_SERVER_URL, serverUrl)

@@ -23,6 +23,7 @@ import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.galaxy.wear.auth.PairClaimClient
 import com.galaxy.wear.domain.model.Phase
+import com.galaxy.wear.service.GalaxyWearService
 import com.galaxy.wear.ui.screens.PairClaimScreen
 import com.galaxy.wear.ui.screens.CallScreen
 import com.galaxy.wear.ui.screens.ConversationScreen
@@ -107,6 +108,11 @@ class MainActivity : ComponentActivity() {
 
         // ROUND-2-FIX + 可打扰性传感:首次启动一次性请求通知与心率权限。
         requestMissingPermissions()
+
+        // 拉起常驻服务。应用在前台时启动前台服务是被允许的；等到后台再启动会被 Android 12+ 拒绝。
+        // 此前只有开机 / 覆盖安装才会拉它，装完不重启就一直没有 —— 进程没有保活，抬腕之外的时间
+        // 连接随进程被回收而断。
+        GalaxyWearService.start(this)
 
         // W3-FIX: Register lifecycle observer for leak prevention
         lifecycle.addObserver(lifecycleObserver)

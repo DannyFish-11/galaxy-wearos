@@ -142,7 +142,9 @@ class PairClaimClient(private val context: Context) {
             return ClaimResult(ok = false, error = "missing_device_id")
         }
 
-        val url = buildApiUrl(serverUrl, PATH_CLAIM)
+        // 明文只许对内网地址：配对码、刚签发的令牌、headscale 一次性钥匙都走这一个请求。
+        val url = PairUrl.apiUrl(serverUrl, PATH_CLAIM)
+            ?: return ClaimResult(ok = false, error = if (serverUrl.isBlank()) "need_server_address" else "cleartext_not_allowed")
         return try {
             val response = httpClient.post(url) {
                 contentType(ContentType.Application.Json)
@@ -205,6 +207,70 @@ class PairClaimClient(private val context: Context) {
             Log.e(TAG, "[PAIR] claim failed: ${e.message}")
             ClaimResult(ok = false, error = "network_error")
         }
+    }
+
+    /** 续期的结果。 */
+    sealed class RenewResult {
+        /** 令牌还很新，或者不是能力令牌（手填的静态令牌）——没有动它。 */
+        object NotNeeded : RenewResult()
+
+        /** 换到了新令牌，已落盘。 */
+        data class Renewed(val token: String) : RenewResult()
+
+        /** 网关明确说这枚令牌不行了（过期 / 已撤销 / 这台设备被移除）——只能重新配对。 */
+        object NeedsRepair : RenewResult()
+
+        /** 这次没成（断网 / 网关不可达 / 内部错误）——令牌可能还没坏，下次再试。 */
+        data class Failed(val reason: String) : RenewResult()
+    }
+
+    /**
+     * 令牌快到期就去网关续一枚新的。
+     *
+     * 网关的条件（`/api/v1/pair/renew`）：旧令牌**还有效**。所以必须在到期前续 —— 过期了只能重新配对。
+     * 笔记本客户端早就这么做；手表此前不续，24 小时后进 ERROR 且不重试，主页上看不出为什么。
+     *
+     * @param serverUrls 依次尝试的网关地址（设置里存的那个、配对时给的候选）。
+     */
+    suspend fun renewIfDue(
+        serverUrls: List<String>,
+        deviceId: String,
+        nowMs: Long = System.currentTimeMillis(),
+    ): RenewResult {
+        val old = storedToken() ?: return RenewResult.NotNeeded
+        if (!CapabilityTokenExpiry.shouldRenew(old, nowMs)) {
+            // 已经过期的也到不了网关那边：它会说无效。读得出来就直接告诉调用方，省一次必败的请求。
+            return if (CapabilityTokenExpiry.isExpired(old, nowMs)) RenewResult.NeedsRepair else RenewResult.NotNeeded
+        }
+        var lastFailure = "no_reachable_gateway"
+        for (base in serverUrls.distinct()) {
+            val url = PairUrl.apiUrl(base, PATH_RENEW) ?: continue
+            try {
+                val response = httpClient.post(url) {
+                    contentType(ContentType.Application.Json)
+                    setBody(buildJsonObject {
+                        put("device_id", deviceId)
+                        put("token", old)
+                    })
+                }
+                val status = response.status.value
+                if (status == 401 || status == 403) return RenewResult.NeedsRepair
+                val body = runCatching { jsonFormat.parseToJsonElement(response.bodyAsText()).jsonObject }.getOrNull()
+                val fresh = body?.get("capability_token")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                if (body?.get("success")?.jsonPrimitive?.booleanOrNull == true && fresh != null) {
+                    encryptedPrefs.edit().putString(KEY_GATEWAY_TOKEN, fresh).apply()
+                    Log.i(TAG, "[PAIR] 令牌已续期")
+                    return RenewResult.Renewed(fresh)
+                }
+                lastFailure = "bad_response_$status"
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastFailure = "network_error"
+                Log.w(TAG, "[PAIR] 续期请求失败($base): ${e.message}")
+            }
+        }
+        return RenewResult.Failed(lastFailure)
     }
 
     /** 已存下来的令牌；没有返回 null。 */
@@ -304,16 +370,6 @@ class PairClaimClient(private val context: Context) {
         return out.sortedBy { it.priority }
     }
 
-    private fun buildApiUrl(baseUrl: String, path: String): String {
-        val trimmed = baseUrl.trim().trimEnd('/')
-        val url = when {
-            trimmed.startsWith("wss://") -> "https://" + trimmed.removePrefix("wss://")
-            trimmed.startsWith("ws://") -> "http://" + trimmed.removePrefix("ws://")
-            else -> trimmed
-        }
-        return "$url/${path.trimStart('/')}"
-    }
-
     fun dispose() {
         runCatching { httpClient.close() }
     }
@@ -323,6 +379,9 @@ class PairClaimClient(private val context: Context) {
 
         /** 三仓统一的接纳端点。V2 侧对它**免鉴权** —— 还没配对的设备手里没有任何令牌。 */
         const val PATH_CLAIM = "/api/v1/pair/claim"
+
+        /** 凭一枚还有效的配对令牌换新的。同样对鉴权豁免 —— 设备手里只有配对令牌。 */
+        const val PATH_RENEW = "/api/v1/pair/renew"
 
         private const val PREFS_FILE = "galaxy_auth"
         private const val PLAIN_PREFS_FILE = "galaxy_pairing"
