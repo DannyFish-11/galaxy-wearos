@@ -53,8 +53,26 @@ android {
         abi { enableSplit = true }
     }
 
+    // 签名。钥匙库**不进仓库**(.gitignore 已排除 *.jks / *.keystore),路径与口令从环境变量来:
+    //   GALAXY_KEYSTORE_PATH / GALAXY_KEYSTORE_PASSWORD / GALAXY_KEY_ALIAS / GALAXY_KEY_PASSWORD
+    // 没设 GALAXY_KEYSTORE_PATH 时**不报错、不签名**,产出 app-release-unsigned.apk —— 这样克隆仓库
+    // 的人和 CI 的普通运行也能把 release 构建跑通(验证 R8 规则),只有持有钥匙的人 / CI 才产出
+    // 可安装的正式包。静默回退到 debug 签名才是坑:装得上、却升级不了正式包。
+    val releaseKeystorePath = System.getenv("GALAXY_KEYSTORE_PATH").orEmpty()
+    if (releaseKeystorePath.isNotBlank()) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(releaseKeystorePath)
+                storePassword = System.getenv("GALAXY_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("GALAXY_KEY_ALIAS")
+                keyPassword = System.getenv("GALAXY_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -67,7 +85,7 @@ android {
             // 留着比删掉更坏:它们让人以为 release 版会去连 `wss://localhost:9000`,
             // 而手表上 localhost 就是手表自己 —— 一个读代码的人会照着这条假线索去查
             // "为什么连不上"。真正的取址链路在 GalaxyWearApplication.discoverGateway():
-            //   mDNS(2 秒窗口) → Tailscale 段扫描 → 都没有就让用户在设置里手填,
+            //   mDNS(2 秒窗口) → 都没有就让用户在设置里手填(出门直连的候选地址来自配对),
             //   手填的值进 EncryptedSharedPreferences 的 server_url。
             // 要再引入编译期默认地址,请先确认它真的会被读,否则就是又立一块假路牌。
             //
@@ -183,6 +201,15 @@ android.sourceSets.getByName("main").jniLibs.srcDir(tailnetJniDir.get().asFile)
 tasks.named("preBuild") { dependsOn(buildTailnet) }
 
 dependencies {
+    // release 构建的 lintVitalRelease 会因 InvalidFragmentVersionForActivityResult 失败：传递依赖
+    // 带进来一份 < 1.3.0 的 androidx.fragment，而本应用用了 Activity Result API（registerForActivityResult）。
+    // 用约束而不是直接依赖：只在 fragment 本来就被拉进来时把它的版本抬上去，不凭空多引一个库。
+    constraints {
+        implementation("androidx.fragment:fragment:1.8.5") {
+            because("旧版 fragment (<1.3.0) 不兼容 Activity Result API，release 的 lintVital 会拦")
+        }
+    }
+
     // PR-SHARED-TRANSPORT: Reuse shared transport module from Android project
     // Eliminates code duplication of GatewayClient / AipTransportManager / BleGatewayClient / MqttGatewayClient.
     implementation(project(":shared-transport"))
@@ -211,7 +238,6 @@ dependencies {
 
     // Core — only what's needed
     implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
     implementation("androidx.lifecycle:lifecycle-service:2.8.4")
     implementation("androidx.activity:activity-compose:1.9.1")
@@ -239,11 +265,6 @@ dependencies {
     // Serialization — JSON + MessagePack dual-format
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
     implementation("org.msgpack:msgpack-core:0.9.8")
-
-    // 二维码(设备登录 QrCodeView / DeviceAuthScreen 用):此前 QrCodeView import 了
-    // com.google.zxing.* 却【没声明依赖】,BitMatrix/MultiFormatWriter 全部无法解析,
-    // 是 QrCodeView 一连串编译错的总根因。补上 ZXing core。
-    implementation("com.google.zxing:core:3.5.3")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")

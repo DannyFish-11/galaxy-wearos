@@ -114,7 +114,6 @@ object HapticVocabulary {
     private val PATTERNS: Map<HapticType, HapticPattern> = mapOf(
         // ── 非警示:伴随可见动作,只确认"生效了",越轻越好 ──────────────
         HapticType.UI_TAP to HapticPattern(listOf(HapticPulse(HapticStrength.LIGHT))),
-        HapticType.PHASE_CHANGE to HapticPattern(listOf(HapticPulse(HapticStrength.LIGHT))),
 
         // ── 警示:不请自来,必须两两可分 ────────────────────────────────
         // 一下中等 —— 最普通的"有事找你"。

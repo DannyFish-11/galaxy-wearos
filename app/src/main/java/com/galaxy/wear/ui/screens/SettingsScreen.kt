@@ -366,37 +366,22 @@ fun SettingsScreen(
                 )
             }
 
-            item {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    CompactChip(
-                        onClick = {
-                            serverUrl = "wss://localhost:9000"
-                            saveSettings()
-                        },
-                        label = { Text("本地", style = MaterialTheme.typography.caption3) }
-                    )
-                    CompactChip(
-                        onClick = {
-                            serverUrl = "wss://100.64.0.1:9000"
-                            saveSettings()
-                        },
-                        label = { Text("Tailscale", style = MaterialTheme.typography.caption3) }
-                    )
-                }
-            }
+            // 这里原先有「本地」「Tailscale」两个预设按钮，一点就把地址写成
+            // `wss://localhost:9000` / `wss://100.64.0.1:9000` 并存盘 —— 两个都是陷阱：
+            // 手表上的 localhost 是它自己；100.64.0.1 要手表有 VPN 才拨得通（Wear OS 装不了），
+            // 且网关默认说明文 ws，`wss://` 也握不上。地址靠「自动发现」或配对拿到，
+            // 或者手填，不再给一键写入错地址的捷径。
 
-            // STAGE-2b: 设备流登录入口。先用上面的预设/发现选好服务器地址,再点此扫码登录取令牌。
+            // 配对入口。先用上面的「自动发现」或手填选好网关地址，再点此输入电脑上显示的配对码。
             item {
                 Spacer(modifier = Modifier.height(8.dp))
                 Chip(
                     onClick = onLogin,
                     label = {
-                        Text("设备登录", style = MaterialTheme.typography.caption1)
+                        Text("与电脑配对", style = MaterialTheme.typography.caption1)
                     },
                     secondaryLabel = {
-                        Text("扫码授权取令牌", style = MaterialTheme.typography.caption3)
+                        Text("输入电脑上显示的配对码", style = MaterialTheme.typography.caption3)
                     },
                     colors = ChipDefaults.primaryChipColors(),
                     modifier = Modifier.fillMaxWidth(0.9f)

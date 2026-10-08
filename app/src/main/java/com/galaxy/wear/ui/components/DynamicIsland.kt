@@ -52,7 +52,7 @@ data class IslandItem(
 @Composable
 fun DynamicIsland(
     items: List<IslandItem>,
-    phaseText: String = "Galaxy",
+    statusText: String = "Galaxy",
     onExpand: () -> Unit = {},
     onCollapse: () -> Unit = {},
     onVoiceReply: () -> Unit = {},
@@ -80,7 +80,7 @@ fun DynamicIsland(
             IslandState.COLLAPSED -> {
                 // ── 小胶囊 ──
                 IslandCapsule(
-                    phaseText = phaseText,
+                    statusText = statusText,
                     count = items.size,
                     glowAlpha = glowAlpha,
                     hasUrgent = items.any { it.priority == "high" },
@@ -132,7 +132,7 @@ fun DynamicIsland(
 
 @Composable
 private fun IslandCapsule(
-    phaseText: String,
+    statusText: String,
     count: Int,
     glowAlpha: Float,
     hasUrgent: Boolean,
@@ -219,7 +219,7 @@ private fun IslandCapsule(
 
             // 状态文本 — 清晰锐利
             Text(
-                text = phaseText,
+                text = statusText,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = Color(0xFFFFF8EB).copy(alpha = 0.85f),
@@ -263,11 +263,11 @@ private fun IslandExpanded(
     onVoiceReply: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val enterAlpha by animateFloatAsState(
-        targetValue = 1f,
-        animationSpec = tween(300),
-        label = "enter"
-    )
+    // 淡入。起点必须是 0：animateFloatAsState 的初值就是目标值时从不播放动画（起点=终点），
+    // 展开是「啪」地一下出现。Animatable 从 0 开始，进入组合后才推到 1。
+    val enter = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { enter.animateTo(1f, tween(300)) }
+    val enterAlpha = enter.value
 
     Box(
         modifier = Modifier

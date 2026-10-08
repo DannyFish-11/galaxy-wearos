@@ -59,9 +59,13 @@ class VoiceCallService : Service() {
 
         if (_controller.value != null) return START_NOT_STICKY // 已经在通话里
 
+        // 新的一通电话开始，上一通的失败提示不再有意义。
+        _lastFailure.value = null
+
         val app = applicationContext as? GalaxyWearApplication
         if (app == null || !app.isAipClientReady()) {
             Log.w(TAG, "AIP 客户端未就绪,通话无法建立")
+            _lastFailure.value = "手表还没连上网关，先连上再拨"
             stopSelf()
             return START_NOT_STICKY
         }
@@ -90,6 +94,12 @@ class VoiceCallService : Service() {
     }
 
     override fun onDestroy() {
+        // dispose() 会把结束原因覆盖成「已释放」，所以要在它之前取。服务一停控制器就被置空，
+        // 界面再也读不到原因 —— 失败提示靠这一份留下来。
+        _controller.value?.let { c ->
+            val ui = c.ui.value
+            if (ui.state == CallState.ENDED) CallEndNotice.of(ui.endedReason)?.let { _lastFailure.value = it }
+        }
         _controller.value?.dispose()
         _controller.value = null
         scope.cancel()
@@ -148,6 +158,15 @@ class VoiceCallService : Service() {
 
         /** 当前这通电话。没有通话时是 null。界面据此渲染,不自己持有控制器。 */
         val controller: StateFlow<VoiceCallController?> = _controller.asStateFlow()
+
+        private val _lastFailure = MutableStateFlow<String?>(null)
+
+        /** 上一通电话为什么没打成 / 为什么断了。正常结束或新一通开始后为 null。 */
+        val lastFailure: StateFlow<String?> = _lastFailure.asStateFlow()
+
+        fun clearFailure() {
+            _lastFailure.value = null
+        }
 
         /** 起一通电话。必须从可见界面调 —— 后台起麦克风型前台服务会被系统拒绝。 */
         fun start(context: Context) {

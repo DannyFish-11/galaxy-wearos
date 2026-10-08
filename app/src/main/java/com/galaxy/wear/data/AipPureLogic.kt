@@ -64,30 +64,56 @@ internal object AipPureLogic {
     }
 
     /**
+     * `voice_query` 命令的内层载荷。
+     *
+     * `session_id` 只在有值时才带:网关读 `payload.session_id`,空串会被当成「没带」,
+     * 但不带比带空串更诚实 —— 老网关可能把空串当成一个真的会话号。
+     */
+    internal fun voiceQueryPayload(text: String, sessionId: String): JsonObject = buildJsonObject {
+        put("text", text)
+        put("source", "wear_os")
+        if (sessionId.isNotBlank()) put("session_id", sessionId)
+    }
+
+    /**
      * DEVICE: 解析设备列表响应。
      *
      * 整份解析是**尽力而为**:任何一处缺字段都回落到占位值,整体解析失败回空表。
      * 这是有意的 —— 设备列表是展示用的,少一个字段不该让整屏空掉。
      */
     internal fun parseDeviceList(payload: JsonElement): List<DeviceInfo> {
-        return try {
-            val array = payload.jsonArray
-            array.map { element ->
+        val array = try {
+            payload.jsonArray
+        } catch (e: Exception) {
+            return emptyList()
+        }
+        // 逐项解析:一项坏了(不是对象)只丢那一项,不让整屏变空。
+        return array.mapNotNull { element ->
+            try {
                 val obj = element.jsonObject
                 DeviceInfo(
-                    deviceId = obj["device_id"]?.jsonPrimitive?.content ?: "unknown",
-                    displayName = obj["display_name"]?.jsonPrimitive?.content ?: "Unknown Device",
-                    deviceType = obj["device_type"]?.jsonPrimitive?.content ?: "unknown",
-                    status = obj["status"]?.jsonPrimitive?.content ?: "unknown",
-                    capabilities = obj["capabilities"]?.jsonArray?.map { it.jsonPrimitive.content }
+                    deviceId = obj.text("device_id") ?: "unknown",
+                    // V2 网关的设备条目叫 `device_name`(UDM 的字段名);`display_name` 是更早的写法。
+                    // 只认后者的话,V2 回的每一台设备在手表上都显示 "Unknown Device"。
+                    displayName = obj.text("display_name") ?: obj.text("device_name") ?: obj.text("name")
+                        ?: "Unknown Device",
+                    deviceType = obj.text("device_type") ?: "unknown",
+                    status = obj.text("status") ?: "unknown",
+                    capabilities = (obj["capabilities"] as? JsonArray)
+                        ?.mapNotNull { (it as? JsonPrimitive)?.content }
                         ?: emptyList(),
-                    lastSeen = obj["last_seen"]?.jsonPrimitive?.long ?: System.currentTimeMillis(),
+                    // V2 条目没有这个字段,有的话也可能是 ISO 字符串:读不成毫秒数就用当前时间,
+                    // 而不是因为一个展示字段把整条设备丢掉。
+                    lastSeen = (obj["last_seen"] as? JsonPrimitive)?.longOrNull ?: System.currentTimeMillis(),
                 )
+            } catch (e: Exception) {
+                null
             }
-        } catch (e: Exception) {
-            emptyList()
         }
     }
+
+    private fun JsonObject.text(key: String): String? =
+        (this[key] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content?.takeIf { it.isNotBlank() }
 
     private val pureJson = Json {
         ignoreUnknownKeys = true

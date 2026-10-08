@@ -17,20 +17,17 @@
     <!-- Wake lock for background connection -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- Android 12+ BLE permissions (targetSdk=35 requires runtime permission model) -->
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
-
-    <!-- NEARBY_DEVICES permission for mDNS and WiFi scanning -->
-    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
-
-    <!-- Request ignore battery optimizations for foreground service stability -->
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- 这里原先还声明了 BLUETOOTH_SCAN/CONNECT/ADVERTISE、NEARBY_WIFI_DEVICES、
+         REQUEST_IGNORE_BATTERY_OPTIMIZATIONS：全仓没有任何代码用蓝牙、附近 Wi-Fi 设备，
+         也没有任何地方去请求忽略电池优化。声明了没用的权限只会让安装时多几条吓人的授权、
+         让上架审核多问几句。需要时再加，而且加的同时要有用它的代码。 -->
 
     <!-- Foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- 常驻服务在 Android 14+ 用 specialUse:dataSync 在 Android 15 起每 24 小时只许跑 6 小时
+         (到点不停服务就崩),且不许从 BOOT_COMPLETED 启动。见 GalaxyWearService.startForeground。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- 通话期间的麦克风型前台服务。Android 14 起后台访问麦克风必须有这一条,
          否则表现是「抬手看表能说话,手一放下 AI 就听不见了」,而且不报任何错。 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
@@ -65,7 +62,7 @@
         android:name=".GalaxyWearApplication"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="Lumiv"
+        android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault"
         android:networkSecurityConfig="@xml/network_security_config"
@@ -87,32 +84,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Voice input activity — OPPO Watch 3 primary shortcut target -->
-        <!-- SECURITY-FIX-R5: exported="false" because the custom action com.galaxy.wear.ACTION_VOICE_COMMAND
-             is only dispatched internally by the GalaxyWearService. External apps should not be able to
-             trigger voice recording or command interpretation on the watch. -->
-        <activity
-            android:name=".VoiceActivity"
-            android:exported="false"
-            android:launchMode="singleTop"
-            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
-            <intent-filter>
-                <action android:name="android.intent.action.VOICE_COMMAND" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-            <!-- OPPO ColorOS Watch: double-press side key shortcut entry -->
-            <intent-filter>
-                <action android:name="com.galaxy.wear.ACTION_VOICE_COMMAND" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-            <!-- Android Wear: voice action intent -->
-            <intent-filter>
-                <action android:name="android.speech.action.VOICE_SEARCH_HANDS_FREE" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </activity>
-
-        <!-- Background Lumiv service -->
+        <!-- 通话前台服务与常驻连接服务 -->
         <!-- 通话期间才起,挂断即停。不把 microphone 类型并进常驻的 GalaxyWearService:
              那等于表上常年挂着一个录音指示灯。 -->
         <service
@@ -123,9 +95,14 @@
         <service
             android:name=".service.GalaxyWearService"
             android:exported="false"
-            android:foregroundServiceType="dataSync"
-            android:stopWithTask="false"
-            android:persistent="true" />
+            android:foregroundServiceType="dataSync|specialUse"
+            android:stopWithTask="false">
+            <!-- specialUse 必须声明用途。这个服务做的事:保持一条到用户自己网关的长连接,接收智能体的
+                 提问与消息、回传用户的回答。不属于系统预设的任何一类前台服务。 -->
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="persistent_connection_to_user_gateway" />
+        </service>
 
         <!-- BroadcastReceiver for boot and package replacement events.
              Android 8+ forbids Services from receiving BOOT_COMPLETED directly.
@@ -169,22 +146,6 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="com.galaxy.wear.ACTION_DECISION_REPLY" />
-            </intent-filter>
-        </receiver>
-
-        <!-- 侧键硬键唤醒语音接收器。类此前存在但从未在 manifest 注册
-             (其自身注释要求注册),等于死组件 —— 现注册使之可用。
-             SECURITY: exported="false" 仅内部使用。
-             平台限制(如实标注):Wear OS 多数设备不广播系统级
-             ACTION_KEY_EVENT,该路径在此类设备上收不到事件;可靠的
-             侧键唤醒需 AccessibilityService 回退(见类文档)。注册它
-             是让"支持该广播的设备"能用,不代表所有设备可用。 -->
-        <receiver
-            android:name=".service.WatchButtonReceiver"
-            android:enabled="true"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.KEY_EVENT" />
             </intent-filter>
         </receiver>
 
