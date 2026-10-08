@@ -24,6 +24,23 @@ class WatchMemberFramesTest {
     private fun str(o: JsonObject, k: String) = o[k]!!.jsonPrimitive.content
 
     @Test
+    fun `every frame declares AIP v3 so the gateway does not read it as the 1-0 dialect`() {
+        // 缺 version 的帧被网关当成 AIP/1.0；1.0 里的 command_result 是「任务结果」(task_result)，
+        // 被跨仓 schema 闸门拒收（missing_schema_version_metadata），手表对智能体动作的回话
+        // 到不了等它的那个调用 —— 每次 devices__invoke 都只能等到超时。
+        // V2 侧由 tests/test_watch_reaches_the_central_agent.py 在真实入口上证明这一点。
+        val frames = listOf(
+            WatchMember.registerFrame("w-1", "t", "n", "v", 1L),
+            WatchMember.capabilityReportFrame("w-1", 1L),
+            WatchMember.commandResultFrame("w-1", "cmd_1", true, buildJsonObject { }, null, 1L),
+            WatchMember.commandResultFrame("w-1", "cmd_2", false, buildJsonObject { }, "boom", 1L),
+        )
+        for (f in frames) {
+            assertEquals(str(f, "type"), "3.0", str(f, "version"))
+        }
+    }
+
+    @Test
     fun `register carries the token at the top level because that is where the gateway reads it`() {
         val f = WatchMember.registerFrame("w-1", "tok-123", "OPPO Watch 3", "2.0.1", 1_000L)
         assertEquals("device_register", str(f, "type"))

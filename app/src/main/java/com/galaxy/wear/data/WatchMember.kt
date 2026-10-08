@@ -34,6 +34,14 @@ internal object WatchMember {
     const val DEVICE_TYPE = "wearos"
     const val PLATFORM = "wearos"
 
+    /**
+     * 这几种帧不经 [com.ufo.galaxy.shared.protocol.AipMessage] 信封，所以信封默认带的
+     * `version` 得自己补上。缺了它网关把帧当成 AIP/1.0：1.0 里的 `command_result` 是「任务结果」
+     * (`task_result`)，会被跨仓 schema 闸门以 `missing_schema_version_metadata` 拒收 ——
+     * 手表对智能体下发动作的回话到不了等待它的那个调用，每次 `devices__invoke` 都只能等到超时。
+     */
+    const val AIP_VERSION = "3.0"
+
     /** 手表接受智能体下发的动作。每一个都在 [com.galaxy.wear.domain.AgentCommandExecutor] 里有实现。 */
     val SUPPORTED_ACTIONS: List<String> = listOf("notify", "haptic", "get_status")
 
@@ -50,6 +58,7 @@ internal object WatchMember {
         appVersion: String,
         nowMs: Long,
     ): JsonObject = buildJsonObject {
+        put("version", AIP_VERSION)
         put("type", "device_register")
         put("device_id", deviceId)
         put("timestamp", nowMs)
@@ -70,6 +79,7 @@ internal object WatchMember {
 
     /** `capability_report`:这台手表能替智能体做的动作。 */
     fun capabilityReportFrame(deviceId: String, nowMs: Long): JsonObject = buildJsonObject {
+        put("version", AIP_VERSION)
         put("type", "capability_report")
         put("device_id", deviceId)
         put("timestamp", nowMs)
@@ -91,6 +101,7 @@ internal object WatchMember {
         error: String?,
         nowMs: Long,
     ): JsonObject = buildJsonObject {
+        put("version", AIP_VERSION)
         put("type", "command_result")
         put("device_id", deviceId)
         put("command_id", commandId)

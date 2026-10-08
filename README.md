@@ -102,15 +102,15 @@ AIP v3 over WebSocket（`/ws/device/{device_id}`），消息结构来自共享�
 
 ```jsonc
 // 认证后登记（令牌在顶层）
-{"type":"device_register","device_id":"…","token":"…","device_type":"wearos","platform":"wearos", "payload":{…}}
+{"version":"3.0","type":"device_register","device_id":"…","token":"…","device_type":"wearos","platform":"wearos", "payload":{…}}
 // 报能力（supported_actions 在顶层）
-{"type":"capability_report","device_id":"…","supported_actions":["notify","haptic","get_status"]}
+{"version":"3.0","type":"capability_report","device_id":"…","supported_actions":["notify","haptic","get_status"]}
 // 一问一答的语音；相关 id 用 correlation_id
 {"type":"command","command":"voice_query","correlation_id":"cmd_7","payload":{"text":"开灯","source":"wear_os","session_id":"…"}}
 // 回答一条决策
 {"type":"command","command":"human_input","payload":{"decision_id":"…","selected_option":"approve"}}
 // 对智能体下发动作的回话（command_id 在顶层，结果在 payload）
-{"type":"command_result","command_id":"…","payload":{"success":true,"…":"…"}}
+{"version":"3.0","type":"command_result","command_id":"…","payload":{"success":true,"…":"…"}}
 ```
 
 ## 项目结构
