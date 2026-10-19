@@ -939,6 +939,38 @@ class GalaxyWearApplication : Application() {
         }
     }
 
+    /** 这块表现在配着对（存着配对得来的令牌）。设置页据此显示「解除配对」。 */
+    fun isPaired(): Boolean = pairClaimClient.storedToken() != null
+
+    /**
+     * 解除配对：请智能体把这块表移出去（作废令牌、移出名册与 tailnet），然后断开、停掉 tailnet
+     * 转发、忘掉配对。不论智能体那边连不连得上，本机都退出 —— 见 [com.galaxy.wear.auth.PairLeave]。
+     */
+    suspend fun unpair(): com.galaxy.wear.auth.PairLeave.Outcome {
+        val pairedToken = pairClaimClient.storedToken()
+        val bases = buildList {
+            add(encryptedPrefs.getString(KEY_SERVER_URL, "").orEmpty())
+            // 走普通 HTTP，到不了本机转发口：tailnet 那条不试（与续期同理）。
+            pairClaimClient.storedCandidates().filter { it.kind != "tailscale" }.forEach { add(it.url) }
+        }.filter { it.isNotBlank() }
+        val outcome = pairClaimClient.leave(bases, DeviceIdProvider.getOrCreateDeviceId(this))
+        if (isAipClientReady()) {
+            try {
+                aipClient.disconnect()
+                markDevicesOffline()
+            } catch (e: Exception) {
+                Log.w(TAG, "解除配对时断开失败: ${e.message}")
+            }
+        }
+        tailnetDaemon.stop()
+        // 连接用的令牌就是配对得来的那枚时一并清掉；手填的静态令牌不是这次配对的，不动它。
+        if (pairedToken != null && encryptedPrefs.getString(KEY_AUTH_TOKEN, "") == pairedToken) {
+            encryptedPrefs.edit().remove(KEY_AUTH_TOKEN).apply()
+        }
+        _needsRepair.value = false
+        return outcome
+    }
+
     fun disconnect() {
         // LOW-FIX: Use isTerminal to avoid redundant disconnect calls
         if (_connectionState.value.isTerminal) {

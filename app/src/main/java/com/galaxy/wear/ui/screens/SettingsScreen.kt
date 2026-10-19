@@ -22,6 +22,7 @@ import androidx.security.crypto.MasterKey
 import androidx.wear.compose.material.*
 import androidx.wear.input.RemoteInputIntentHelper
 import com.galaxy.wear.GalaxyWearApplication
+import com.galaxy.wear.auth.PairLeave
 import com.galaxy.wear.auth.PairingMessages
 import com.galaxy.wear.data.AIPConnectionState
 import kotlinx.coroutines.Job
@@ -387,6 +388,46 @@ fun SettingsScreen(
                     colors = ChipDefaults.primaryChipColors(),
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
+            }
+
+            // 解除配对：退出也是这块表自己的事。点一次变成「再点一次确认」，第二次才做。
+            if (app.isPaired()) {
+                item {
+                    var confirming by remember { mutableStateOf(false) }
+                    var leaving by remember { mutableStateOf(false) }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    CompactChip(
+                        onClick = {
+                            if (leaving) return@CompactChip
+                            if (!confirming) {
+                                confirming = true
+                                return@CompactChip
+                            }
+                            leaving = true
+                            scope.launch {
+                                try {
+                                    val outcome = app.unpair()
+                                    token = prefs.getString("auth_token", "") ?: ""
+                                    Toast.makeText(context, PairLeave.text(outcome), Toast.LENGTH_LONG).show()
+                                } finally {
+                                    leaving = false
+                                    confirming = false
+                                }
+                            }
+                        },
+                        label = {
+                            Text(
+                                when {
+                                    leaving -> "解除中..."
+                                    confirming -> "再点一次确认解除"
+                                    else -> "解除配对"
+                                },
+                                style = MaterialTheme.typography.caption3
+                            )
+                        },
+                        colors = ChipDefaults.secondaryChipColors()
+                    )
+                }
             }
 
             item {

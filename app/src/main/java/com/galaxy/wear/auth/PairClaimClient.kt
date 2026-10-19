@@ -273,6 +273,51 @@ class PairClaimClient(private val context: Context) {
         return RenewResult.Failed(lastFailure)
     }
 
+    /**
+     * 解除配对：凭存着的配对令牌请网关把这块表移出去，然后本机忘掉这次配对（见 [PairLeave]）。
+     *
+     * 依次试 [serverUrls]，第一个给出明确回答（成功 / 401 / 403）的为准。不论结果如何都会
+     * [forgetPairing] —— 人要退出，不能因为此刻连不上就退不掉。
+     */
+    suspend fun leave(serverUrls: List<String>, deviceId: String): PairLeave.Outcome {
+        val token = storedToken()
+        var outcome = if (token == null) PairLeave.Outcome.ALREADY_GONE else PairLeave.Outcome.UNREACHABLE
+        if (token != null) {
+            for (base in serverUrls.distinct()) {
+                val url = PairUrl.apiUrl(base, PairLeave.PATH) ?: continue
+                try {
+                    val response = httpClient.post(url) {
+                        contentType(ContentType.Application.Json)
+                        setBody(buildJsonObject {
+                            put("device_id", deviceId)
+                            put("token", token)
+                        })
+                    }
+                    val body = runCatching { jsonFormat.parseToJsonElement(response.bodyAsText()).jsonObject }.getOrNull()
+                    outcome = PairLeave.outcomeOf(response.status.value, body?.get("success")?.jsonPrimitive?.booleanOrNull)
+                    if (outcome != PairLeave.Outcome.UNREACHABLE) break
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "[PAIR] 解除配对请求失败($base): ${e.message}")
+                }
+            }
+        }
+        forgetPairing()
+        Log.i(TAG, "[PAIR] 已解除配对: $outcome")
+        return outcome
+    }
+
+    /** 忘掉这次配对：令牌、候选路径、上次通的那条、tailnet 配置与钥匙。 */
+    fun forgetPairing() {
+        encryptedPrefs.edit().remove(KEY_GATEWAY_TOKEN).remove(KEY_TAILNET_AUTH_KEY).apply()
+        plainPrefs.edit()
+            .remove(KEY_CANDIDATES)
+            .remove(KEY_LAST_GOOD)
+            .remove(KEY_TAILNET_CONTROL_URL)
+            .apply()
+    }
+
     /** 已存下来的令牌；没有返回 null。 */
     fun storedToken(): String? =
         encryptedPrefs.getString(KEY_GATEWAY_TOKEN, null)?.takeIf { it.isNotBlank() }

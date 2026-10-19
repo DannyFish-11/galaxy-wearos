@@ -48,16 +48,19 @@ class PairingMessagesTest {
     }
 
     @Test
-    fun `a computer that is not on the tailnet says how to fix it in local mode`() {
+    fun `an agent that is not on the tailnet says how to fix it`() {
         val n = PairingMessages.tailnetNotice("desktop_not_on_tailnet")!!
-        assertTrue(n.contains("跨设备"))
+        assertTrue(n.contains("Tailscale"))
+        // 「跨设备」说的是那台设备自己加不加入，从不是手表连智能体的前提：别再叫人去开它
+        assertFalse(n.contains("跨设备"))
     }
 
     @Test
     fun `not finding the gateway offers the two ways out`() {
         val t = PairingMessages.gatewayNotFoundText()
         assertTrue(t.contains("手填地址"))
-        assertTrue(t.contains("跨设备"))
+        assertTrue(t.contains("Wi-Fi"))
+        assertFalse(t.contains("跨设备"))
     }
 
     @Test
