@@ -48,6 +48,19 @@ class PairingMessagesTest {
     }
 
     @Test
+    fun `a computer that is not on the tailnet says how to fix it in local mode`() {
+        val n = PairingMessages.tailnetNotice("desktop_not_on_tailnet")!!
+        assertTrue(n.contains("跨设备"))
+    }
+
+    @Test
+    fun `not finding the gateway offers the two ways out`() {
+        val t = PairingMessages.gatewayNotFoundText()
+        assertTrue(t.contains("手填地址"))
+        assertTrue(t.contains("跨设备"))
+    }
+
+    @Test
     fun `an unknown reason is shown rather than swallowed`() {
         val n = PairingMessages.tailnetNotice("brand_new_reason")!!
         assertTrue(n.contains("brand_new_reason"))

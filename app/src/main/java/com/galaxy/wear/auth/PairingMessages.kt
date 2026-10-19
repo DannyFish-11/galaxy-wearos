@@ -41,9 +41,19 @@ object PairingMessages {
             "api_key_rejected" -> "电脑上的 headscale 密钥已失效"
             "headscale_unreachable", "headscale_error" -> "电脑连不上 headscale"
             "no_such_user" -> "headscale 上没有对应用户"
-            "desktop_not_on_tailnet" -> "电脑还没加入 tailnet"
+            // 电脑在本地模式（默认）时启动不入 tailnet、也不广播；要出门直连得先在面板打开「跨设备」。
+            "desktop_not_on_tailnet" -> "电脑还没加入 tailnet（本地模式下不入网，在面板打开「跨设备」）"
             else -> reason
         }
         return "出门直连未开启：$why。在家的局域网直连不受影响"
     }
+
+    /**
+     * 「自动发现网关」没找到时对人说的话。
+     *
+     * 只说「未发现网关」，人就只会反复点。找不到最常见的原因是：电脑在**本地模式**（默认）时
+     * 不往局域网广播自己（只用这台电脑，广播只会把它暴露给同一 Wi-Fi 下的人）。
+     * 所以要告诉人两条出路：手填地址，或在电脑面板打开「跨设备」。
+     */
+    fun gatewayNotFoundText(): String = "未发现网关。电脑在本地模式时不广播，请手填地址，或在面板打开「跨设备」"
 }

@@ -22,6 +22,7 @@ import androidx.security.crypto.MasterKey
 import androidx.wear.compose.material.*
 import androidx.wear.input.RemoteInputIntentHelper
 import com.galaxy.wear.GalaxyWearApplication
+import com.galaxy.wear.auth.PairingMessages
 import com.galaxy.wear.data.AIPConnectionState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -346,7 +347,7 @@ fun SettingsScreen(
                                 } else {
                                     // CRITICAL-FIX: Notify user when auto-discovery fails.
                                     // Previously returned null silently leaving user confused.
-                                    Toast.makeText(context, "未发现网关", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, PairingMessages.gatewayNotFoundText(), Toast.LENGTH_LONG).show()
                                 }
                             } catch (e: Exception) {
                                 // FIX: Prevent isDiscovering from staying true forever
