@@ -379,10 +379,10 @@ fun SettingsScreen(
                 Chip(
                     onClick = onLogin,
                     label = {
-                        Text("与电脑配对", style = MaterialTheme.typography.caption1)
+                        Text("与智能体配对", style = MaterialTheme.typography.caption1)
                     },
                     secondaryLabel = {
-                        Text("输入电脑上显示的配对码", style = MaterialTheme.typography.caption3)
+                        Text("输入智能体给的配对码", style = MaterialTheme.typography.caption3)
                     },
                     colors = ChipDefaults.primaryChipColors(),
                     modifier = Modifier.fillMaxWidth(0.9f)
