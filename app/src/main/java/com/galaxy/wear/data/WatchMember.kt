@@ -21,7 +21,8 @@ import kotlinx.serialization.json.put
  *
  * 这些帧的形状是照 V2 网关的处理器写的,不是手表自己的惯例:
  *  * `device_register`:令牌在**顶层** `token`(`evaluate_ingress_authentication` 读它);
- *  * `capability_report`:`supported_actions` 在**顶层**(处理器读 `message["supported_actions"]`);
+ *  * `capability_report`:`supported_actions` 在**顶层**(处理器读 `message["supported_actions"]`),
+ *    每个动作的一句话说明在 `capability_schemas[].description`;
  *  * `command_result`:`command_id` 在**顶层**(网关按它唤醒等待中的调用),结果在 `payload`
  *    (`payload.success == false` 即失败,`payload.error` 是原因)。
  *
@@ -44,6 +45,16 @@ internal object WatchMember {
 
     /** 手表接受智能体下发的动作。每一个都在 [com.galaxy.wear.domain.AgentCommandExecutor] 里有实现。 */
     val SUPPORTED_ACTIONS: List<String> = listOf("notify", "haptic", "get_status")
+
+    /**
+     * 每个动作对智能体说的一句话(说效果,不说实现)。智能体把每台设备当成一个整体来看、自己决定让谁做什么
+     * (V2 `core/device_onboarding/device_card.py`):它在设备整体卡里读到的就是这几句。
+     */
+    val ACTION_DESCRIPTIONS: Map<String, String> = mapOf(
+        "notify" to "在手表上弹一条通知(标题 + 正文),戴表的人抬腕就能看到",
+        "haptic" to "让手表震一下提醒戴表的人(只用于提醒类)",
+        "get_status" to "读手表的电量、连接与是否在佩戴",
+    )
 
     /**
      * `device_register`。
@@ -85,6 +96,18 @@ internal object WatchMember {
         put("timestamp", nowMs)
         put("platform", PLATFORM)
         put("supported_actions", JsonArray(SUPPORTED_ACTIONS.map { JsonPrimitive(it) }))
+        // 网关的处理器读 capability_schemas[].description,原样交给智能体
+        put(
+            "capability_schemas",
+            JsonArray(
+                SUPPORTED_ACTIONS.map { action ->
+                    buildJsonObject {
+                        put("action", action)
+                        put("description", ACTION_DESCRIPTIONS[action].orEmpty())
+                    }
+                },
+            ),
+        )
     }
 
     /**

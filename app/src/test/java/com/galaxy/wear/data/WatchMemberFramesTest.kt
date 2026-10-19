@@ -76,6 +76,18 @@ class WatchMemberFramesTest {
     }
 
     @Test
+    fun `every reported action tells the agent what it does`() {
+        // 智能体把设备当整体看、自己决定让谁做什么:它读到的说明就是这里给的(V2 capability_schemas[].description)
+        val f = WatchMember.capabilityReportFrame("w-1", 2L)
+        val schemas = (f["capability_schemas"] as JsonArray).map { it as JsonObject }
+        assertEquals(WatchMember.SUPPORTED_ACTIONS, schemas.map { it["action"]!!.jsonPrimitive.content })
+        for (s in schemas) {
+            val desc = s["description"]!!.jsonPrimitive.content
+            assertTrue("${s["action"]} 没有说明", desc.isNotBlank())
+        }
+    }
+
+    @Test
     fun `a successful command result is addressed by command id and carries the data`() {
         val f = WatchMember.commandResultFrame(
             "w-1", "cmd_ab12", true, buildJsonObject { put("delivered", true) }, null, 3L,
