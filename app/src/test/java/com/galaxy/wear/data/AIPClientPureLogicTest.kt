@@ -147,6 +147,32 @@ class AIPClientPureLogicTest {
     }
 
     @Test
+    fun `V2 网关的设备条目叫 device_name,手表也要认`() {
+        // V2 `device_router.get_device_status()` 的条目是 {device_id, device_name, device_type, status, capabilities}。
+        // 手表只读 display_name 时,V2 回的每一台设备都显示 "Unknown Device"。
+        val list = parse(
+            """[{"device_id":"pc-1","device_name":"书房台式机","device_type":"windows_desktop",
+                 "status":"online","capabilities":["gui"],"source":"udm"}]""",
+        )
+        assertEquals("书房台式机", list[0].displayName)
+        assertEquals("online", list[0].status)
+    }
+
+    @Test
+    fun `display_name 优先于 device_name,空白名字不算名字`() {
+        assertEquals("A", parse("""[{"device_id":"x","display_name":"A","device_name":"B"}]""")[0].displayName)
+        assertEquals("B", parse("""[{"device_id":"x","display_name":"  ","device_name":"B"}]""")[0].displayName)
+        assertEquals("Unknown Device", parse("""[{"device_id":"x","device_name":null}]""")[0].displayName)
+    }
+
+    @Test
+    fun `一项坏了只丢那一项,last_seen 不是毫秒数也不丢设备`() {
+        val list = parse("""[{"device_id":"a","last_seen":"2026-10-08T07:00:00+00:00"}, 5, {"device_id":"b"}]""")
+        assertEquals(listOf("a", "b"), list.map { it.deviceId })
+        assertTrue(list[0].lastSeen > 1_600_000_000_000L)
+    }
+
+    @Test
     fun `连 device_id 都没有也回落,而不是抛`() {
         val list = parse("""[{}]""")
         assertEquals(1, list.size)
@@ -176,10 +202,10 @@ class AIPClientPureLogicTest {
     }
 
     @Test
-    fun `数组里混进非对象元素时整体回空表`() {
-        // 钉住的是**当前**行为:map 里任一元素抛,整个 try 就回 emptyList ——
-        // 不是"跳过坏的那条"。这两种语义差别很大,写明白哪一种在生效。
-        assertTrue(parse("""[{"device_id":"pc-1"}, 42]""").isEmpty())
+    fun `数组里混进非对象元素时只丢那一项`() {
+        // 语义改了：以前 map 里任一元素抛，整个 try 就回 emptyList —— 一项坏数据让整屏设备消失。
+        // 设备列表是展示用的，坏掉的那条不值得拖累其余的，所以现在逐项解析、只丢坏的。
+        assertEquals(listOf("pc-1"), parse("""[{"device_id":"pc-1"}, 42]""").map { it.deviceId })
     }
 
     // ── msgpack 编解码:双格式的另一半 ───────────────────────────────────

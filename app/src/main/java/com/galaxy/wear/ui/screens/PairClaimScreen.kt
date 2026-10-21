@@ -33,6 +33,7 @@ import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.galaxy.wear.auth.PairClaimClient
+import com.galaxy.wear.auth.PairingMessages
 import kotlinx.coroutines.launch
 
 /**
@@ -71,6 +72,8 @@ fun PairClaimScreen(
     var code by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // 配对成功、但出门直连没开成时的说明：不直接跳走，让人看到原因
+    var notice by remember { mutableStateOf<String?>(null) }
 
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colors.background)) {
         Column(
@@ -82,6 +85,24 @@ fun PairClaimScreen(
                 CircularProgressIndicator(modifier = Modifier.size(32.dp))
                 Spacer(Modifier.height(8.dp))
                 Text("正在接入…", style = MaterialTheme.typography.body2)
+                return@Column
+            }
+
+            val tailnetNotice = notice
+            if (tailnetNotice != null) {
+                Text("已接入", style = MaterialTheme.typography.title3, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    tailnetNotice,
+                    style = MaterialTheme.typography.caption2,
+                    color = MaterialTheme.colors.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = onPaired,
+                    modifier = Modifier.size(width = 72.dp, height = 32.dp),
+                ) { Text("知道了", style = MaterialTheme.typography.caption2) }
                 return@Column
             }
 
@@ -150,17 +171,12 @@ fun PairClaimScreen(
                             )
                             busy = false
                             if (r.ok) {
-                                onPaired()
+                                val why = PairingMessages.tailnetNotice(r.tailnetUnavailableReason)
+                                if (why == null) onPaired() else notice = why
                             } else {
                                 // 失败原因分档：可重输 / 要等 / 网络问题 —— 下一步
                                 // 该做的事完全不同，糊成一句"失败"等于没说。
-                                error = when (r.error) {
-                                    "too_many_attempts" -> "错太多次，等几分钟"
-                                    "network_error" -> "连不上网关"
-                                    "no_token_issued" -> "被拒绝接入"
-                                    "missing_device_id" -> "本机标识为空"
-                                    else -> "码无效或已过期"
-                                }
+                                error = PairingMessages.claimErrorText(r.error)
                                 code = ""
                             }
                         }

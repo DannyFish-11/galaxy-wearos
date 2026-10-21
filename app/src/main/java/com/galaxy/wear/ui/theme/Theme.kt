@@ -12,8 +12,8 @@ import androidx.wear.compose.material.MaterialTheme
  * 不放在 theme 色板中（保持主界面纯黑白灰）。
  */
 private val GalaxyDarkColors = Colors(
-    primary = GrayManifest,          // #E0E0E0 亮灰（主交互色）
-    primaryVariant = GrayLiminal,    // #666666 中灰
+    primary = GrayBright,          // #E0E0E0 亮灰（主交互色）
+    primaryVariant = GrayMid,    // #666666 中灰
     secondary = WhiteSecondary,      // #8E8E93
     secondaryVariant = WhiteSecondary,
     background = SpaceBlack,         // #0A0A0F 深空黑

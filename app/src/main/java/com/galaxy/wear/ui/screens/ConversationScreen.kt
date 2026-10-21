@@ -12,6 +12,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -135,14 +137,42 @@ fun ConversationScreen(
             }
 
             item {
-                CompactChip(
-                    onClick = onBack,
-                    label = { Text("返回", style = MaterialTheme.typography.caption2) },
-                    colors = ChipDefaults.secondaryChipColors(),
-                    modifier = Modifier
-                        .fillMaxWidth(0.55f)
-                        .padding(top = 10.dp, bottom = 8.dp),
-                )
+                // 会话记录是明文存在手表上的（他说过的话、智能体问过他的事）。丢表、转手、
+                // 送修时，用户得有地方把它清掉。两步确认：点一下变成「再点一次清除」，
+                // 离开这一屏就复位 —— 误触不该抹掉一整段对话。
+                var confirmClear by remember { mutableStateOf(false) }
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(top = 10.dp, bottom = 8.dp),
+                ) {
+                    if (rows.isNotEmpty()) {
+                        CompactChip(
+                            onClick = {
+                                if (confirmClear) {
+                                    app.conversationRecorder.clearHistory()
+                                    confirmClear = false
+                                } else {
+                                    confirmClear = true
+                                }
+                            },
+                            label = {
+                                Text(
+                                    if (confirmClear) "再点一次清除" else "清除记录",
+                                    style = MaterialTheme.typography.caption2,
+                                )
+                            },
+                            colors = ChipDefaults.secondaryChipColors(),
+                            modifier = Modifier.fillMaxWidth(0.55f),
+                        )
+                    }
+                    CompactChip(
+                        onClick = onBack,
+                        label = { Text("返回", style = MaterialTheme.typography.caption2) },
+                        colors = ChipDefaults.secondaryChipColors(),
+                        modifier = Modifier.fillMaxWidth(0.55f),
+                    )
+                }
             }
         }
     }

@@ -4,7 +4,7 @@ package com.galaxy.wear.ui
  * 触觉类别 —— 手表上"不用看就知道发生了什么"的词汇表。
  *
  * @param alerting 这一下是**不请自来**的(消息/决策/出错),还是伴随用户
- *   自己动作的确认反馈(点按/三态切换)?
+ *   自己动作的确认反馈(点按)?
  *
  *   这个区分不是修辞。Android 触觉设计原则要求「很频繁的事件要非常轻」,
  *   同时要求「同类交互必须同一种反馈,用户才建立得起联想」。两条合起来:
@@ -18,9 +18,6 @@ package com.galaxy.wear.ui
 enum class HapticType(val alerting: Boolean) {
     /** 屏幕上的点按确认。全表最频繁的事件 → 必须最轻。 */
     UI_TAP(alerting = false),
-
-    /** 三态切换(SILENT/LIMINAL/MANIFEST)。伴随可见的界面变化。 */
-    PHASE_CHANGE(alerting = false),
 
     /** 消息到达。 */
     MESSAGE_ARRIVAL(alerting = true),

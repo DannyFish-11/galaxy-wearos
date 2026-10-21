@@ -15,8 +15,8 @@ import androidx.wear.tiles.RequestBuilders
 import androidx.wear.tiles.TileBuilders
 import androidx.wear.tiles.TileService
 import com.galaxy.wear.GalaxyWearApplication
-import com.galaxy.wear.domain.model.Phase
-import com.galaxy.wear.ui.theme.PhaseVisual
+import com.galaxy.wear.domain.HomeStatus
+import com.galaxy.wear.ui.theme.StatusVisual
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 
@@ -31,9 +31,10 @@ import com.google.common.util.concurrent.ListenableFuture
  * 之前同时 wildcard 了 tiles.* 与 protolayout.* 两套 builder,导致每个 builder 重载歧义、
  * 且 deprecated-tiles 一套缺 setCorner/ColorBuilders.Color 等成员 —— 收敛到 protolayout 后消除。
  *
- * Shows current phase at a glance on the watch face carousel.
+ * 在表盘轮播里一眼看到「和智能体连着没有、有几件事在等」。
  * P2-FIX: Updates every 60 seconds (was 30s) to reduce battery drain.
- * Phase changes trigger immediate refresh via requestRefresh().
+ * 连接状态变化时 Application 立刻调 requestRefresh()。
+ * 显示的是连接,不是三态：三态是电脑上的东西，与手表无关。
  */
 class GalaxyTileService : TileService() {
 
@@ -41,7 +42,7 @@ class GalaxyTileService : TileService() {
         private const val RESOURCES_VERSION = "1"
         private const val REFRESH_INTERVAL_MS = 60000L // P2-FIX: 60s to reduce battery drain
 
-        // W16-FIX: Request tile refresh from external callers (e.g., on phase change)
+        // W16-FIX: Request tile refresh from external callers (e.g., on connection change)
         fun requestRefresh(context: Context) {
             try {
                 getUpdater(context).requestUpdate(GalaxyTileService::class.java)
@@ -55,13 +56,17 @@ class GalaxyTileService : TileService() {
         requestParams: RequestBuilders.TileRequest
     ): ListenableFuture<TileBuilders.Tile> {
         val app = application as GalaxyWearApplication
-        val phase = app.phase.value
+        val status = HomeStatus.of(
+            state = app.connectionState.value,
+            needsRepair = app.needsRepair.value,
+            pending = app.islandItems.value.size,
+        )
 
         val tile = TileBuilders.Tile.Builder()
             .setResourcesVersion(RESOURCES_VERSION)
             .setFreshnessIntervalMillis(REFRESH_INTERVAL_MS)
             .setTileTimeline(
-                TimelineBuilders.Timeline.fromLayoutElement(buildLayout(phase))
+                TimelineBuilders.Timeline.fromLayoutElement(buildLayout(status))
             )
             .build()
         return Futures.immediateFuture(tile)
@@ -77,12 +82,11 @@ class GalaxyTileService : TileService() {
         )
     }
 
-    private fun buildLayout(phase: Phase): LayoutElementBuilders.LayoutElement {
-        // 颜色与标签都从 PhaseVisual 取 —— 这里曾经各写各的字面量,四项里漂了三项
-        // (LIMINAL #808080 vs #666666、MANIFEST #E0E0E0 vs #F5F5F7、底色纯黑 vs #0A0A0F)。
-        // Tile 和表盘应用在同一块表上同时可见,漂了就是肉眼可见的两个灰。
-        val dotColor = PhaseVisual.statusArgb(phase)
-        val label = PhaseVisual.label(phase)
+    private fun buildLayout(status: HomeStatus): LayoutElementBuilders.LayoutElement {
+        // 颜色从 StatusVisual 取、标签从 HomeStatus 取 —— 表盘应用读的是同一份。
+        // Tile 和表盘应用在同一块表上同时可见,各写各的字面量就是肉眼可见的两个灰。
+        val dotColor = StatusVisual.argb(status.tone)
+        val label = status.label
 
         return LayoutElementBuilders.Box.Builder()
             .setWidth(expand())
@@ -91,7 +95,7 @@ class GalaxyTileService : TileService() {
                 ModifiersBuilders.Modifiers.Builder()
                     .setBackground(
                         ModifiersBuilders.Background.Builder()
-                            .setColor(argb(PhaseVisual.BACKGROUND_ARGB.toInt()))
+                            .setColor(argb(StatusVisual.BACKGROUND_ARGB.toInt()))
                             .build()
                     )
                     .build()
@@ -104,7 +108,7 @@ class GalaxyTileService : TileService() {
                         LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER
                     )
                     .addContent(
-                        // Phase dot — 圆点(用 Background 的 corner 半径做成圆形)
+                        // 状态点 — 圆点(用 Background 的 corner 半径做成圆形)
                         LayoutElementBuilders.Box.Builder()
                             .setWidth(dp(12f))
                             .setHeight(dp(12f))
@@ -135,6 +139,16 @@ class GalaxyTileService : TileService() {
                             .setColor(argb(dotColor))
                             .build()
                     )
+                    .apply {
+                        status.detail?.let { detail ->
+                            addContent(
+                                Text.Builder(this@GalaxyTileService, detail)
+                                    .setTypography(Typography.TYPOGRAPHY_CAPTION2)
+                                    .setColor(argb(dotColor))
+                                    .build()
+                            )
+                        }
+                    }
                     .addContent(
                         LayoutElementBuilders.Spacer.Builder()
                             .setHeight(dp(2f))
@@ -143,7 +157,7 @@ class GalaxyTileService : TileService() {
                     .addContent(
                         Text.Builder(this, "GALAXY")
                             .setTypography(Typography.TYPOGRAPHY_CAPTION2)
-                            .setColor(argb(PhaseVisual.CAPTION_ARGB.toInt()))
+                            .setColor(argb(StatusVisual.CAPTION_ARGB.toInt()))
                             .build()
                     )
                     .build()

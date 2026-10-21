@@ -487,26 +487,23 @@ class AIPClient(
         sendJson(msg)
     }
 
-    suspend fun sendVoiceQuery(transcript: String) {
+    /**
+     * 把一句话交给智能体。
+     *
+     * @param sessionId 这句话接着哪条对话说。回复智能体发来的消息时,传那条消息带的
+     *   `conversation_id` —— 否则这句话落进手表自己的对话,智能体那条会话里看不到你的回复。
+     *   留空 = 手表自己的对话(网关按设备另起一条,同一块表跨句续得上)。
+     */
+    suspend fun sendVoiceQuery(transcript: String, sessionId: String = "") {
         // 自己造 correlationId 而不是让 sendCommand 内部生成:回复回来时要靠它认领。
         // command_result 同时也是**设备命令**的结果,不配对就无从分辨哪条是对话。
         val correlationId = "cmd_${messageId.incrementAndGet()}"
-        conversationRecorder?.recordUserQuery(transcript, correlationId = correlationId)
+        conversationRecorder?.recordUserQuery(transcript, correlationId = correlationId, conversationId = sessionId)
         sendCommand(
             "voice_query",
-            buildJsonObject {
-                put("text", transcript)
-                put("source", "wear_os")
-            },
+            AipPureLogic.voiceQueryPayload(transcript, sessionId),
             correlationId = correlationId,
         )
-    }
-
-    suspend fun sendPhaseReport(phase: String) {
-        sendCommand("phase_report", buildJsonObject {
-            put("phase", phase)
-            put("device", "wear_os")
-        })
     }
 
     /**
@@ -521,6 +518,35 @@ class AIPClient(
         timestampMs: Long = System.currentTimeMillis(),
     ) {
         sendCommand("interruptibility", report.toWirePayload(timestampMs = timestampMs))
+    }
+
+    /**
+     * 向网关登记这块表并报告它能替智能体做的动作。失败不致命(连接还在,只是智能体暂时看不见这块表),
+     * 记日志,下次重连再来。
+     */
+    private suspend fun registerAsMember() {
+        val now = System.currentTimeMillis()
+        try {
+            sendRawJson(
+                WatchMember.registerFrame(
+                    deviceId = deviceId,
+                    token = token,
+                    deviceName = android.os.Build.MODEL ?: "Wear OS",
+                    appVersion = BuildConfig.VERSION_NAME,
+                    nowMs = now,
+                ),
+            )
+            sendRawJson(WatchMember.capabilityReportFrame(deviceId, now))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(GalaxyWearApplication.TAG, "成员登记没发出去(下次重连再试): ${e.message}")
+        }
+    }
+
+    /** 回话:智能体下发的动作执行完了(或没能执行)。按 `command_id` 回,网关据此唤醒等待。 */
+    suspend fun sendCommandResult(commandId: String, success: Boolean, data: JsonObject, error: String?) {
+        sendRawJson(WatchMember.commandResultFrame(deviceId, commandId, success, data, error, System.currentTimeMillis()))
     }
 
     /**
@@ -568,6 +594,25 @@ class AIPClient(
                     // Reset backoff on successful auth
                     reconnectAttempt = 0
                     startHeartbeat()
+                    // 认证通过后向网关登记并报能力:智能体靠这个才知道有这块表、能让它做什么。
+                    // 每次(重)连都发 —— 网关那边的登记随连接而来,断开即作废。
+                    scope.launch { registerAsMember() }
+                }
+                "device_register_ack" -> {
+                    // 登记失败不会让连接断掉,但智能体会因此看不见这块表 —— 必须留一行能查的日志。
+                    if (json["success"]?.jsonPrimitive?.booleanOrNull == false) {
+                        Log.w(
+                            GalaxyWearApplication.TAG,
+                            "网关拒绝了手表登记: ${json["message"]?.jsonPrimitive?.contentOrNull} " +
+                                "(${json["error_code"]?.jsonPrimitive?.contentOrNull})",
+                        )
+                    }
+                }
+                "command" -> {
+                    // 智能体经 devices__invoke 下发给手表的动作(V2 UnifiedConnectionManager.send_command_and_wait:
+                    // {type:"command", command_id, command, params})。整帧上抛,由 Application 执行并
+                    // 回同一个 command_id 的 command_result;网关默认只等 15 秒。
+                    emitMessage(AIPMessage(type = MsgType.COMMAND, payload = json, deviceId = deviceId))
                 }
                 "auth_failed" -> {
                     Log.e(GalaxyWearApplication.TAG, "Authentication failed")
@@ -617,6 +662,11 @@ class AIPClient(
                         ?: ""
                     // 用服务端给的 message_id 去重:断线补发才不会记成两条、弹两次通知。
                     val serverId = json["message_id"]?.jsonPrimitive?.contentOrNull ?: ""
+                    // 协议里的 reply_expected:只有它为真,通知上才给回复入口。原先这里没往上带,
+                    // 于是智能体说「我在等你回话」,手表上却永远没有回复框。
+                    val replyExpected = json["reply_expected"]?.jsonPrimitive?.booleanOrNull
+                        ?: (json["payload"] as? JsonObject)?.get("reply_expected")?.jsonPrimitive?.booleanOrNull
+                        ?: false
                     val recorded = conversationRecorder?.recordAgentMessage(
                         text = text,
                         conversationId = conversationId,
@@ -631,6 +681,7 @@ class AIPClient(
                                 put("title", title)
                                 put("conversation_id", recorded.conversationId)
                                 put("message_id", recorded.id)
+                                put("reply_expected", replyExpected)
                             },
                             deviceId = deviceId,
                         ))
@@ -927,6 +978,21 @@ class AIPClient(
     }
 
     private suspend fun sendJson(msg: AIPMessage) {
+        sendEncoded(jsonFormat.encodeToString(AIPMessage.serializer(), msg))
+    }
+
+    /**
+     * 直接发一个 JSON 对象(不经 [AIPMessage] 信封)。
+     *
+     * 手表作为成员说的几种帧(`device_register` / `capability_report` / `command_result`)的字段位置
+     * 由 V2 网关的处理器决定 —— 例如 `command_id` 在顶层 —— 而共享协议的信封没有这个字段,
+     * 所以这几种帧直接造 JsonObject(见 [WatchMember])。
+     */
+    private suspend fun sendRawJson(obj: JsonObject) {
+        sendEncoded(jsonFormat.encodeToString(JsonObject.serializer(), obj))
+    }
+
+    private suspend fun sendEncoded(json: String) {
         // CRITICAL-FIX: Send directly via WebSocket FIRST to break the infinite loop:
         // sendJson(msg) → transportManager.sendJson() → callback sendJson(json:String) →
         // runBlocking → sendJson(msg) → ... (was causing stack overflow / deadlock)
@@ -938,7 +1004,6 @@ class AIPClient(
             // DUAL-FORMAT: send as MessagePack binary if opted in
             if (useBinaryFormat) {
                 try {
-                    val json = jsonFormat.encodeToString(AIPMessage.serializer(), msg)
                     val packed = packMsgpack(json)
                     if (packed != null) {
                         session.outgoing.send(Frame.Binary(fin = true, data = packed))
@@ -948,7 +1013,6 @@ class AIPClient(
                     Log.w(GalaxyWearApplication.TAG, "Msgpack send failed, falling back to JSON: ${e.message}")
                 }
             }
-            val json = jsonFormat.encodeToString(AIPMessage.serializer(), msg)
             session.outgoing.send(Frame.Text(json))
             return
         }
@@ -959,7 +1023,6 @@ class AIPClient(
             try {
                 val transportManager = AipTransportManager.getInstance()
                 if (transportManager.isConnected()) {
-                    val json = jsonFormat.encodeToString(AIPMessage.serializer(), msg)
                     val sent = transportManager.sendJson(json)
                     if (sent) return // Successfully routed through transportManager
                 }

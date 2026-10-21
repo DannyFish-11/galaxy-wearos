@@ -184,7 +184,7 @@ fun DevicesScreen(
                 item {
                     CircularProgressIndicator(
                         modifier = Modifier.size(24.dp).padding(vertical = 20.dp),
-                        indicatorColor = GrayLiminal,
+                        indicatorColor = GrayMid,
                         strokeWidth = 2.dp
                     )
                 }

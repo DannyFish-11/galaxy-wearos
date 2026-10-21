@@ -32,11 +32,11 @@ class DecisionWithdrawCancelsTheRightNotificationTest {
 
     @Test
     fun `弹通知和撤回通知用的是同一个 id 算法`() {
-        val service = source("com/galaxy/wear/service/GalaxyWearService.kt")
+        val service = source("com/galaxy/wear/service/WatchNotifications.kt")
         val app = source("com/galaxy/wear/GalaxyWearApplication.kt")
 
         assertTrue(
-            "GalaxyWearService 弹决策通知时不是用 decisionId.hashCode() 当 id —— " +
+            "WatchNotifications 弹决策通知时不是用 decisionId.hashCode() 当 id —— " +
                 "撤回那边算出来的会对不上",
             service.contains("nm.notify(decisionId.hashCode()"),
         )

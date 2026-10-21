@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,6 +30,7 @@ import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.galaxy.wear.call.CallEndNotice
 import com.galaxy.wear.call.CallState
 import com.galaxy.wear.call.VoiceCallService
 
@@ -46,6 +48,7 @@ fun CallScreen(isAmbient: Boolean = false, onBack: () -> Unit) {
     val context = LocalContext.current
     val controller by VoiceCallService.controller.collectAsState()
     val ui = controller?.ui?.collectAsState()?.value
+    val lastFailure by VoiceCallService.lastFailure.collectAsState()
 
     var hasPermission by remember {
         mutableStateOf(
@@ -61,8 +64,12 @@ fun CallScreen(isAmbient: Boolean = false, onBack: () -> Unit) {
 
     // 通话结束就自动退回上一屏。停在一块写着"已结束"的表盘上没有意义,而且用户下一步
     // 一定是划走。
+    // 离开这一屏就把上一通的失败提示收起来，下次打开不该看到陈年旧账。
+    DisposableEffect(Unit) { onDispose { VoiceCallService.clearFailure() } }
+
+    // 正常结束（自己挂断、对端挂断）直接退；失败要留在屏幕上让人看见原因。
     LaunchedEffect(ui?.state) {
-        if (ui?.state == CallState.ENDED && ui.endedReason.isEmpty()) onBack()
+        if (ui?.state == CallState.ENDED && CallEndNotice.of(ui.endedReason) == null) onBack()
     }
 
     Box(
@@ -94,12 +101,15 @@ fun CallScreen(isAmbient: Boolean = false, onBack: () -> Unit) {
                 )
             }
 
-            val reason = ui?.endedReason.orEmpty()
-            if (reason.isNotEmpty() && ui?.state == CallState.ENDED) {
+            // 通话在服务里结束时服务会马上停、控制器随之置空，界面读不到 ui 了；
+            // 这时用服务留下的 lastFailure。
+            val failure = ui?.takeIf { it.state == CallState.ENDED }?.let { CallEndNotice.of(it.endedReason) }
+                ?: lastFailure.takeIf { ui == null }
+            if (!failure.isNullOrEmpty()) {
                 // 失败原因必须显示出来。「通话失败」四个字是最难排查的一类提示:
                 // 没给麦克风权限、网关没连上、后端没配 key,处置完全不同。
                 Text(
-                    text = reason,
+                    text = failure,
                     style = MaterialTheme.typography.caption2,
                     color = Color(0xFFE57373),
                     textAlign = TextAlign.Center,

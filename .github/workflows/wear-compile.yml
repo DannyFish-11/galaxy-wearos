@@ -9,11 +9,16 @@ name: Wear Compile Gate
 # DannyFish-11/ufo-galaxy-android 的 PAT 或 fine-grained token)——默认 GITHUB_TOKEN
 # 只能访问当前仓,拿不到私有兄弟仓。加上后本门即可真正编译验证。
 
+# 触发:合进 main、打版本 tag、以及所有 PR。**不再对每个分支的每次 push 都跑** —— 此前
+# push: ["**"] 加 pull_request,PR 分支每提交一次就并行跑两遍同样的构建(都要编 Go、拉兄弟仓、
+# 跑 Gradle,各十来分钟)。没有 PR 的临时分支想验证,用 workflow_dispatch 手动触发。
 on:
   push:
-    branches: ["**"]
+    branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: ["**"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -35,9 +40,9 @@ jobs:
       #
       # 改成：**默认分支对着默认分支验证，其它分支先找兄弟仓的同名分支**。
       #
-      # 边界划在「是不是 main」，不是「是不是 PR」。本工作流 push 与 pull_request 都触发，
-      # 而 push: branches: ["**"] 意味着每次推特性分支也会跑一遍；若那一遍恒用 main，
-      # 跨仓改动就永远有一条注定红的运行 —— 墙没拆掉，只是挪了个位置。
+      # 边界划在「是不是 main」，不是「是不是 PR」。（现在 push 只在 main 与 tag 上触发，
+      # 特性分支只经 pull_request / 手动触发跑；若这里对非 main 的运行恒用 main，
+      # 跨仓改动就永远有一条注定红的运行 —— 墙没拆掉，只是挪了个位置。）
       # 需要守住的不变式只有一条：main 必须对着 main 验证，"main 是绿的"才成立。
       #
       # 安全边界：ls-remote 只在 **DannyFish-11/ufo-galaxy-android** 里找分支，而那个仓
@@ -145,6 +150,51 @@ jobs:
         # "测试只编译、从不运行"的门放过了上百处真实失败(含多个真生产 bug)。
         # 测试必须真跑,红了就修,不留只编不跑的假绿。
         run: ./gradlew :app:assembleDebug :app:testDebugUnitTest --no-daemon
+
+      # release 包。此前 CI 只构建 debug,release 开了 R8 + 资源收缩,却从没被构建过 ——
+      # 「debug 好、release 才崩」的缺规则 / 缺类问题没有任何地方能看见。这一步让它们在这里红。
+      #
+      # 签名:仓库配了 GALAXY_KEYSTORE_BASE64 等四个 Secret 才签(见 app/build.gradle.kts);
+      # 没配就产出 app-release-unsigned.apk —— 照样能验证 R8,只是装不上。fork 的 PR 拿不到
+      # Secret,同样走无签名路径。
+      - name: 还原 release 钥匙库（仅当配置了 Secret）
+        id: signing
+        env:
+          KEYSTORE_B64: ${{ secrets.GALAXY_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/galaxy-release.jks"
+            echo "path=$RUNNER_TEMP/galaxy-release.jks" >> "$GITHUB_OUTPUT"
+            echo "✅ 已还原钥匙库,release 包将被签名" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "path=" >> "$GITHUB_OUTPUT"
+            echo "ℹ️ 没配 GALAXY_KEYSTORE_BASE64,release 包不签名(只验证 R8 构建)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Build release (R8 + 资源收缩)
+        working-directory: galaxy-wearos
+        env:
+          GALAXY_KEYSTORE_PATH: ${{ steps.signing.outputs.path }}
+          GALAXY_KEYSTORE_PASSWORD: ${{ secrets.GALAXY_KEYSTORE_PASSWORD }}
+          GALAXY_KEY_ALIAS: ${{ secrets.GALAXY_KEY_ALIAS }}
+          GALAXY_KEY_PASSWORD: ${{ secrets.GALAXY_KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --no-daemon
+
+      - name: release 包里有 tailnet 进程
+        working-directory: galaxy-wearos
+        run: |
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          echo "release 包: $APK"
+          unzip -l "$APK" | grep -q "lib/arm64-v8a/libgalaxytailnet.so" \
+            || { echo "release APK 里没有 lib/arm64-v8a/libgalaxytailnet.so"; unzip -l "$APK" | grep "lib/" ; exit 1; }
+          echo "✅ $(unzip -l "$APK" | grep libgalaxytailnet.so)"
+
+      - name: 上传 release APK（tag 与手动触发）
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wear-release-apk
+          path: galaxy-wearos/app/build/outputs/apk/release/*.apk
 
       # tailnet 进程必须真的进了 APK、在 arm64-v8a 下、名字对 —— 否则装上去出门就连不上,
       # 而 App 只会报"本机 ABI 没有打包"。

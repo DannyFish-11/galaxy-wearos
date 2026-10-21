@@ -29,7 +29,6 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.wear.compose.material.*
 import com.galaxy.wear.GalaxyWearApplication
-import com.galaxy.wear.domain.model.Phase
 import com.galaxy.wear.ui.theme.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -45,7 +44,7 @@ import kotlinx.coroutines.launch
  *   - 动态波形（Canvas 竖条，正弦波动）
  *   - 呼吸光晕（outer glow animateFloat）
  *   - 扩散环（listening ring expand-fade）
- *   - 按住说话 → 语音识别 → 发送 AIP
+ *   - 点一下说话 → 系统语音识别 → 发送 AIP
  */
 @Composable
 fun VoiceScreen(
@@ -66,17 +65,15 @@ fun VoiceScreen(
     var isListening by remember { mutableStateOf(false) }
     var transcript by remember { mutableStateOf("") }
     var isSending by remember { mutableStateOf(false) }
-    var statusText by remember { mutableStateOf("按住屏幕说话") }
+    var statusText by remember { mutableStateOf(IDLE_HINT) }
 
     // Animated waveform time
     var waveTime by remember { mutableFloatStateOf(0f) }
 
-    // Listen for phase
-    val phase by app.phase.collectAsState()
-
     // Auto-advance waveform when active
-    LaunchedEffect(isListening) {
-        while (isListening) {
+    // 常亮（ambient）态不跑动画：每 16ms 改一次状态等于让 CPU/屏幕一直醒着，OLED 上也有烧屏风险。
+    LaunchedEffect(isListening, isAmbient) {
+        while (isListening && !isAmbient) {
             waveTime += 0.05f
             delay(16) // ~60fps
         }
@@ -94,6 +91,7 @@ fun VoiceScreen(
             if (text.isNotEmpty()) {
                 transcript = text
                 statusText = "发送中..."
+                isSending = true
                 scope.launch {
                     try {
                         if (app.isAipClientReady()) {
@@ -101,7 +99,7 @@ fun VoiceScreen(
                             statusText = "已发送"
                             delay(1500)
                             if (!isListening) {
-                                statusText = "按住屏幕说话"
+                                statusText = IDLE_HINT
                                 transcript = ""
                             }
                         } else {
@@ -110,6 +108,8 @@ fun VoiceScreen(
                     } catch (e: Exception) {
                         Log.e("VoiceScreen", "Send failed: ${e.message}")
                         statusText = "发送失败"
+                    } finally {
+                        isSending = false
                     }
                 }
             } else {
@@ -127,7 +127,7 @@ fun VoiceScreen(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasPermission = granted
-        statusText = if (granted) "按住屏幕说话" else "需要麦克风权限"
+        statusText = if (granted) IDLE_HINT else "需要麦克风权限"
     }
 
     // ── Main Layout ─────────────────────────────────────
@@ -167,10 +167,7 @@ fun VoiceScreen(
             }
     ) {
         // ── Nebula particles (subtle) ──────────────────
-        NebulaParticles()
-
-        // ── Phase dots (black/white/gray) ──────────────
-        PhaseDots(phase = phase, modifier = Modifier.align(Alignment.TopCenter).padding(top = 32.dp))
+        if (!isAmbient) NebulaParticles()
 
         // ── Glass Orb + Waveform center ────────────────
         Box(
@@ -180,10 +177,10 @@ fun VoiceScreen(
                 .offset(y = (-10).dp)
         ) {
             // Outer breathing glow
-            BreathingGlow(isActive = isListening)
+            if (!isAmbient) BreathingGlow(isActive = isListening)
 
             // Listening expand ring
-            if (isListening) {
+            if (isListening && !isAmbient) {
                 ExpandRing()
             }
 
@@ -194,6 +191,7 @@ fun VoiceScreen(
             WaveformCanvas(
                 time = waveTime,
                 isActive = isListening,
+                animate = !isAmbient,
                 modifier = Modifier
                     .size(120.dp)
                     .align(Alignment.Center)
@@ -223,77 +221,6 @@ fun VoiceScreen(
                 .padding(bottom = 8.dp)
         )
     }
-}
-
-// ═══════════════════════════════════════════════════════
-// Phase Dots (BLACK/WHITE/GRAY only)
-// ═══════════════════════════════════════════════════════
-@Composable
-private fun PhaseDots(phase: Phase, modifier: Modifier = Modifier) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = modifier
-    ) {
-        // SILENT — dark gray
-        val silentColor = when (phase) {
-            Phase.SILENT -> GrayManifest    // bright when active
-            else -> GraySilent               // dim when inactive
-        }
-        val silentGlow = when (phase) {
-            Phase.SILENT -> GrayManifest.copy(alpha = 0.5f)
-            else -> Color.Transparent
-        }
-
-        // LIMINAL — medium gray (NOT amber)
-        val liminalColor = when (phase) {
-            Phase.LIMINAL -> GrayManifest
-            else -> GrayLiminal
-        }
-        val liminalGlow = when (phase) {
-            Phase.LIMINAL -> GrayManifest.copy(alpha = 0.5f)
-            else -> Color.Transparent
-        }
-
-        // MANIFEST — white/bright gray
-        val manifestColor = when (phase) {
-            Phase.MANIFEST -> Color.White
-            else -> GrayManifest
-        }
-        val manifestGlow = when (phase) {
-            Phase.MANIFEST -> Color.White.copy(alpha = 0.4f)
-            else -> Color.Transparent
-        }
-
-        PhaseDot(color = silentColor, glow = silentGlow, isPulsing = phase == Phase.SILENT)
-        PhaseDot(color = liminalColor, glow = liminalGlow, isPulsing = phase == Phase.LIMINAL)
-        PhaseDot(color = manifestColor, glow = manifestGlow, isPulsing = phase == Phase.MANIFEST)
-    }
-}
-
-@Composable
-private fun PhaseDot(color: Color, glow: Color, isPulsing: Boolean) {
-    val scale by animateFloatAsState(
-        targetValue = if (isPulsing) 1.3f else 1f,
-        animationSpec = if (isPulsing) {
-            infiniteRepeatable(tween(900, easing = EaseInOutCubic), RepeatMode.Reverse)
-        } else {
-            tween(300)
-        },
-        label = "phase_dot_scale"
-    )
-    Box(
-        modifier = Modifier
-            .size(6.dp)
-            .scale(if (isPulsing) scale else 1f)
-            .background(
-                brush = Brush.radialGradient(
-                    listOf(glow, Color.Transparent),
-                    radius = 12.dp.value
-                ),
-                shape = CircleShape
-            )
-            .background(color, CircleShape)
-    )
 }
 
 // ═══════════════════════════════════════════════════════
@@ -395,7 +322,6 @@ private fun BreathingGlow(isActive: Boolean) {
                         NebulaBlue.copy(alpha = alpha * 0.4f),
                         Color.Transparent
                     ),
-                    radius = 0.7f
                 ),
                 shape = CircleShape
             )
@@ -436,7 +362,6 @@ private fun ExpandRing() {
                         NebulaCyan.copy(alpha = alpha * 0.5f),
                         Color.Transparent
                     ),
-                    radius = 0.6f
                 ),
                 shape = CircleShape
             )
@@ -474,17 +399,6 @@ private fun ExpandRing() {
 // ═══════════════════════════════════════════════════════
 @Composable
 private fun GlassOrb() {
-    val infiniteTransition = rememberInfiniteTransition(label = "orb_rotate")
-    val rotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            tween(12000, easing = LinearEasing),
-            RepeatMode.Restart
-        ),
-        label = "orb_rotation"
-    )
-
     Canvas(modifier = Modifier.fillMaxSize()) {
         val center = Offset(size.width / 2, size.height / 2)
         val radius = size.minDimension / 2
@@ -564,6 +478,7 @@ private fun GlassOrb() {
 private fun WaveformCanvas(
     time: Float,
     isActive: Boolean,
+    animate: Boolean,
     modifier: Modifier = Modifier
 ) {
     val barCount = 24
@@ -573,8 +488,8 @@ private fun WaveformCanvas(
     val minBarHeight = 4f
 
     // Idle gentle wave when not listening
-    val idleTime by produceState(0f) {
-        while (true) {
+    val idleTime by produceState(0f, animate) {
+        while (animate) {
             value += 0.02f
             delay(32)
         }
@@ -644,3 +559,9 @@ private fun WaveformCanvas(
         }
     }
 }
+
+/**
+ * 空闲提示。是「点一下」而不是「按住」：手势一落下就拉起系统的识别界面，接管了整块屏幕，
+ * 没有哪个按住的手势能活到松手。
+ */
+private const val IDLE_HINT = "点一下屏幕说话"
