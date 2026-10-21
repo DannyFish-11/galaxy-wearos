@@ -63,10 +63,14 @@ class VoiceCallController(
     private val _ui = MutableStateFlow(CallUiState())
     val ui: StateFlow<CallUiState> = _ui.asStateFlow()
 
-    /** 界面上的一通电话。[transcript] 是 AI 回推的文字,不是本地识别的。 */
+    /**
+     * 界面上的一通电话。[transcript] 是 AI 回推的文字,不是本地识别的;[agentTask] 是通话里交给
+     * 智能体的事做到哪了(见 [AgentTaskLine])。
+     */
     data class CallUiState(
         val state: CallState = CallState.IDLE,
         val transcript: String = "",
+        val agentTask: String = "",
         val endedReason: String = "",
         val muted: Boolean = false,
     )
@@ -95,7 +99,7 @@ class VoiceCallController(
             connection.addTrack(createMicTrack())
             enterCommunicationMode()
             connection.createOffer(OfferObserver(connection), MediaConstraints())
-            _ui.value = _ui.value.copy(state = CallState.DIALING, endedReason = "", transcript = "")
+            _ui.value = _ui.value.copy(state = CallState.DIALING, endedReason = "", transcript = "", agentTask = "")
             true
         } catch (t: Throwable) {
             // 建 PeerConnection 会加载原生库,失败在这里抛。不接住的话表盘直接崩,
@@ -151,6 +155,10 @@ class VoiceCallController(
     }
 
     private fun onAiEvent(ev: CallEvent.AiEvent) {
+        AgentTaskLine.of(ev.name, ev.text)?.let { line ->
+            _ui.value = _ui.value.copy(agentTask = line)
+            return
+        }
         when (ev.name) {
             "partial_transcript", "final_transcript", "assistant_text_delta" ->
                 if (ev.text.isNotEmpty()) _ui.value = _ui.value.copy(transcript = ev.text)
