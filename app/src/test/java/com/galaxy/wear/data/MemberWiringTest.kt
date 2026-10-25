@@ -32,6 +32,24 @@ class MemberWiringTest {
     }
 
     @Test
+    fun `the watch reports what it can do right now and reports again when that changes`() {
+        val reg = client.substringAfter("private suspend fun registerAsMember()").substringBefore("/** 回话")
+        assertTrue("登记时报的不是此刻做得了的动作", reg.contains("capabilityReportFrame(deviceId, now, memberActions())"))
+        assertTrue("Application 没告诉连接层此刻能做什么", app.contains("aipClient.memberActions = {"))
+        val activity = source("src/main/java/com/galaxy/wear/MainActivity.kt")
+        val resume = activity.substringAfter("override fun onResume()").substringBefore("override fun onCreate(")
+        assertTrue("回到界面时没有重看权限", resume.contains("refreshMemberActions()"))
+        assertTrue("没问计步权限", activity.contains("add(android.Manifest.permission.ACTIVITY_RECOGNITION)"))
+        assertTrue(source("src/main/AndroidManifest.xml").contains("android.permission.ACTIVITY_RECOGNITION"))
+    }
+
+    @Test
+    fun `steps are counted from app start not from the moment the agent asks`() {
+        val onCreate = app.substringAfter("override fun onCreate()").substringBefore("aipClient = AIPClient(")
+        assertTrue("计步要随应用启动就开始记,否则「今天」从问的那一刻算起", onCreate.contains("stepTracker.ensureStarted()"))
+    }
+
+    @Test
     fun `a rejected registration leaves a log line`() {
         val branch = client.substringAfter("\"device_register_ack\" -> {").substringBefore("\"command\" -> {")
         assertTrue(branch.contains("Log.w"))

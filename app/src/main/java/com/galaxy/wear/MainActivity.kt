@@ -82,11 +82,15 @@ class MainActivity : ComponentActivity() {
                 android.Manifest.permission.BODY_SENSORS ->
                     // 如实标注:拒绝不会让功能瘫掉,只是心率那一路退出加权、
                     // 可打扰性判断的 confidence 变低。
-                    android.util.Log.w("MainActivity", "BODY_SENSORS denied — 可打扰性判断将只用运动/亮屏证据,置信度降低")
+                    android.util.Log.w("MainActivity", "BODY_SENSORS denied — 可打扰性判断将只用运动/亮屏证据,置信度降低;智能体测不了心率")
+                android.Manifest.permission.ACTIVITY_RECOGNITION ->
+                    android.util.Log.w("MainActivity", "ACTIVITY_RECOGNITION denied — 智能体读不了步数")
                 else ->
                     android.util.Log.w("MainActivity", "权限被拒: $permission")
             }
         }
+        // 给了 / 没给心率、计步,手表能替智能体做的动作跟着变
+        (application as GalaxyWearApplication).refreshMemberActions()
     }
 
     /** 首次启动时一次性把缺的运行时权限问全。 */
@@ -94,11 +98,19 @@ class MainActivity : ComponentActivity() {
         val wanted = buildList {
             if (android.os.Build.VERSION.SDK_INT >= 33) add(android.Manifest.permission.POST_NOTIFICATIONS)
             add(android.Manifest.permission.BODY_SENSORS)
+            // 智能体问「我今天走了多少步」
+            add(android.Manifest.permission.ACTIVITY_RECOGNITION)
         }
         val missing = wanted.filter {
             checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED
         }
         if (missing.isNotEmpty()) permissionLauncher.launch(missing.toTypedArray())
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 用户可能刚在系统设置里改了心率 / 计步权限
+        (application as GalaxyWearApplication).refreshMemberActions()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

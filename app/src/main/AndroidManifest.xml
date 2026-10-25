@@ -48,12 +48,16 @@
            - 加速度计不需要权限;
            - 抬腕靠亮屏代理(Wear OS 抬腕亮屏),不需要权限;
            - 勿扰状态是只读查询,不需要权限;
-           - ACTIVITY_RECOGNITION 只有计步/活动识别才需要,本实现没用 —— 不加回,
-             免得重蹈"声明了却没人用"的覆辙。
+           - ACTIVITY_RECOGNITION 可打扰性用不到(它在下面单独声明,给智能体读步数用)。
          BODY_SENSORS_BACKGROUND 同样不加:采集只发生在常驻前台服务(dataSync)里,
          按系统定义属于前台访问。
-         没授权也不会瘫:心率那一路自动退出加权,confidence 相应下降。 -->
+         没授权也不会瘫:心率那一路自动退出加权,confidence 相应下降。
+         智能体调 heart_rate 时也用它现测一次(com.galaxy.wear.sensing.BodyReadings)。 -->
     <uses-permission android:name="android.permission.BODY_SENSORS" />
+
+    <!-- 智能体读「今天走了多少步」(计步传感器 TYPE_STEP_COUNTER,com.galaxy.wear.sensing.StepTracker)。
+         不给也能用,只是手表不报 steps 这个动作。 -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
 
     <!-- Wear OS hardware -->
     <uses-feature android:name="android.hardware.type.watch" />

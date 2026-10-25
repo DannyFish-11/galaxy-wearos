@@ -152,6 +152,12 @@ class AIPClient(
     private var token: String = ""
     private var deviceId: String = ""
 
+    /**
+     * 此刻真做得了的动作(看传感器与权限),登记时报给网关。由 Application 设;没设时只报不依赖传感器的那几个。
+     */
+    @Volatile
+    var memberActions: () -> List<String> = { WatchMember.reportable { false } }
+
     // -----------------------------------------------------------------
     // Lifecycle
     // -----------------------------------------------------------------
@@ -536,11 +542,26 @@ class AIPClient(
                     nowMs = now,
                 ),
             )
-            sendRawJson(WatchMember.capabilityReportFrame(deviceId, now))
+            sendRawJson(WatchMember.capabilityReportFrame(deviceId, now, memberActions()))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.w(GalaxyWearApplication.TAG, "成员登记没发出去(下次重连再试): ${e.message}")
+        }
+    }
+
+    /**
+     * 能做的动作变了(用户给了 / 收回了心率、计步权限)就重报一次,智能体那边的设备卡跟着变。
+     * 还没认证就不报 —— 认证通过时本来就会报。
+     */
+    suspend fun refreshCapabilityReport() {
+        if (_connectionState.value != AIPConnectionState.AUTHENTICATED) return
+        try {
+            sendRawJson(WatchMember.capabilityReportFrame(deviceId, System.currentTimeMillis(), memberActions()))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(GalaxyWearApplication.TAG, "重报能力没发出去(下次重连再报): ${e.message}")
         }
     }
 

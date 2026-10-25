@@ -43,8 +43,26 @@ internal object WatchMember {
      */
     const val AIP_VERSION = "3.0"
 
+    /** 动作要用到、用户可以不给或这块表可能没有的东西。没有的那几个动作就不报。 */
+    enum class Need {
+        /** 心率传感器 + 身体传感器权限。 */
+        HEART_RATE,
+
+        /** 计步传感器 + 体能活动权限。 */
+        STEPS,
+    }
+
     /** 手表接受智能体下发的动作。每一个都在 [com.galaxy.wear.domain.AgentCommandExecutor] 里有实现。 */
-    val SUPPORTED_ACTIONS: List<String> = listOf("notify", "haptic", "get_status")
+    val SUPPORTED_ACTIONS: List<String> = listOf("notify", "haptic", "get_status", "heart_rate", "steps")
+
+    private val NEEDS: Map<String, Need> = mapOf("heart_rate" to Need.HEART_RATE, "steps" to Need.STEPS)
+
+    /**
+     * 此刻真做得了的动作:没有传感器、没给权限的那几个不报 —— 报了智能体就会去调,只能等来一句「做不了」。
+     * 权限变了要重报(V2 会把不再报的动作从设备卡上撤掉)。
+     */
+    fun reportable(available: (Need) -> Boolean): List<String> =
+        SUPPORTED_ACTIONS.filter { action -> NEEDS[action]?.let(available) ?: true }
 
     /**
      * 每个动作对智能体说的一句话(说效果,不说实现)。智能体把每台设备当成一个整体来看、自己决定让谁做什么
@@ -53,7 +71,9 @@ internal object WatchMember {
     val ACTION_DESCRIPTIONS: Map<String, String> = mapOf(
         "notify" to "在手表上弹一条通知(标题 + 正文),戴表的人抬腕就能看到",
         "haptic" to "让手表震一下提醒戴表的人(只用于提醒类)",
-        "get_status" to "读手表的电量、连接与是否在佩戴",
+        "get_status" to "读手表的电量、是否在充电、和中心连着没有",
+        "heart_rate" to "现测一次戴表人的心率(要几秒钟;表没戴好会测不出来),回每分钟多少下",
+        "steps" to "读戴表人今天走了多少步,以及从几点开始算的",
     )
 
     /**
@@ -88,19 +108,19 @@ internal object WatchMember {
         )
     }
 
-    /** `capability_report`:这台手表能替智能体做的动作。 */
-    fun capabilityReportFrame(deviceId: String, nowMs: Long): JsonObject = buildJsonObject {
+    /** `capability_report`:这台手表能替智能体做的动作([actions] 默认全报,实际调用方传 [reportable] 的结果)。 */
+    fun capabilityReportFrame(deviceId: String, nowMs: Long, actions: List<String> = SUPPORTED_ACTIONS): JsonObject = buildJsonObject {
         put("version", AIP_VERSION)
         put("type", "capability_report")
         put("device_id", deviceId)
         put("timestamp", nowMs)
         put("platform", PLATFORM)
-        put("supported_actions", JsonArray(SUPPORTED_ACTIONS.map { JsonPrimitive(it) }))
+        put("supported_actions", JsonArray(actions.map { JsonPrimitive(it) }))
         // 网关的处理器读 capability_schemas[].description,原样交给智能体
         put(
             "capability_schemas",
             JsonArray(
-                SUPPORTED_ACTIONS.map { action ->
+                actions.map { action ->
                     buildJsonObject {
                         put("action", action)
                         put("description", ACTION_DESCRIPTIONS[action].orEmpty())
