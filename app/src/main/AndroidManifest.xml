@@ -32,6 +32,10 @@
          否则表现是「抬手看表能说话,手一放下 AI 就听不见了」,而且不报任何错。 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
+    <!-- 常驻服务在 App 界面拉起、且给了身体传感器权限时另带 health 类型:App 在后台时也测得到心率
+         (service/ForegroundTypes.kt)。后台起服务时不带,Android 14 起那样会抛异常。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
+
     <!-- ROUND-2-FIX: Android 13+ (API 33, targetSdk=35 强制) 通知运行时权限。
          缺省时所有通知被系统静默丢弃 —— 决策通知(HITL)永远不可见,
          前台服务常驻通知也被隐藏。仅在清单声明后才能在运行时用
@@ -99,7 +103,7 @@
         <service
             android:name=".service.GalaxyWearService"
             android:exported="false"
-            android:foregroundServiceType="dataSync|specialUse"
+            android:foregroundServiceType="dataSync|specialUse|health"
             android:stopWithTask="false">
             <!-- specialUse 必须声明用途。这个服务做的事:保持一条到用户自己网关的长连接,接收智能体的
                  提问与消息、回传用户的回答。不属于系统预设的任何一类前台服务。 -->

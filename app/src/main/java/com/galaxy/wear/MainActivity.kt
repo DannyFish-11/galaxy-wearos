@@ -111,6 +111,8 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // 用户可能刚在系统设置里改了心率 / 计步权限
         (application as GalaxyWearApplication).refreshMemberActions()
+        // 心率权限是服务起来之后才给的:从界面再起一次,把 health 类型补上(App 在后台时也测得到心率)
+        GalaxyWearService.upgradeIfNeeded(this)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -122,7 +124,7 @@ class MainActivity : ComponentActivity() {
         // 拉起常驻服务。应用在前台时启动前台服务是被允许的；等到后台再启动会被 Android 12+ 拒绝。
         // 此前只有开机 / 覆盖安装才会拉它，装完不重启就一直没有 —— 进程没有保活，抬腕之外的时间
         // 连接随进程被回收而断。
-        GalaxyWearService.start(this)
+        GalaxyWearService.start(this, fromVisibleUi = true)
 
         // W3-FIX: Register lifecycle observer for leak prevention
         lifecycle.addObserver(lifecycleObserver)
