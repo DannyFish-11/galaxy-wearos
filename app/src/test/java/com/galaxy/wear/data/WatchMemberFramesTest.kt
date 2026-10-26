@@ -128,7 +128,8 @@ class WatchMemberFramesTest {
         // 中心问不问这块表,看它自己声明的这一项,不看它是什么类型的设备
         val f = WatchMember.capabilityReportFrame("w-1", 2L)
         assertTrue(f["answers_decisions"]!!.jsonPrimitive.boolean)
-        assertTrue("手表会显示智能体主动说的话", f["shows_messages"]!!.jsonPrimitive.boolean)
+        // 智能体主动说的话走手表自己的 notify 动作(V2 ask_human__notify 调它),不再另有一项声明
+        assertFalse(f.containsKey("shows_messages"))
         assertFalse("手表不显示请求进度,不声明", f.containsKey("shows_request_progress"))
     }
 

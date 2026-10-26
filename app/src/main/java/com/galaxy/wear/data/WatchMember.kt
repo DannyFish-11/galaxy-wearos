@@ -77,7 +77,7 @@ internal object WatchMember {
      * (V2 `core/device_onboarding/device_card.py`):它在设备整体卡里读到的就是这几句。
      */
     val ACTION_DESCRIPTIONS: Map<String, String> = mapOf(
-        "notify" to "在手表上弹一条通知(标题 + 正文),戴表的人抬腕就能看到",
+        "notify" to "跟戴表的人说一句话:弹一条通知(标题 + 正文),抬腕就能看到,也记进手表上的对话",
         "haptic" to "让手表震一下提醒戴表的人(只用于提醒类)",
         "get_status" to "读手表的电量、是否在充电、和中心连着没有",
         "heart_rate" to "现测一次戴表人的心率(要几秒钟;表没戴好会测不出来),回每分钟多少下",
@@ -98,6 +98,8 @@ internal object WatchMember {
         "notify" to Params.obj(
             "title" to Params.string("标题", maxLength = 60),
             "text" to Params.string("正文", maxLength = 500),
+            "reply_expected" to Params.boolean("通知上带一个快速回复框"),
+            "conversation_id" to Params.string("归进哪一串对话(中心的会话号)"),
             required = listOf("text"),
         ),
         "haptic" to Params.obj(
@@ -196,8 +198,6 @@ internal object WatchMember {
         // 智能体要问人一件事(decision_request)时,手表能把问题摆到戴表的人面前、把回答交回去。
         // 中心按这一项决定问不问这块表,不按设备类型认(V2 pending_decision_registry.declares_decision_support)。
         put("answers_decisions", true)
-        // 智能体主动说的一句话(agent_message)手表会弹通知、记进会话;中心按这一项决定发不发给这块表
-        put("shows_messages", true)
         // 网关的处理器读 capability_schemas[].description,原样交给智能体
         put(
             "capability_schemas",
