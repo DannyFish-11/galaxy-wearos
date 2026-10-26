@@ -124,6 +124,12 @@ class WatchMemberFramesTest {
     }
 
     @Test
+    fun `the report says the watch can answer the agent's questions`() {
+        // 中心问不问这块表,看它自己声明的这一项,不看它是什么类型的设备
+        assertTrue(WatchMember.capabilityReportFrame("w-1", 2L)["answers_decisions"]!!.jsonPrimitive.boolean)
+    }
+
+    @Test
     fun `a watch reports heart rate and steps only when it can actually read them`() {
         // 报了做不了的动作,智能体就会去调,只能等来一句「做不了」
         assertEquals(listOf("notify", "haptic", "get_status"), WatchMember.reportable { false })
