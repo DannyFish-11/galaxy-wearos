@@ -28,14 +28,23 @@ class MemberWiringTest {
         assertTrue("auth_ok 之后没有登记", branch.contains("registerAsMember()"))
         val reg = client.substringAfter("private suspend fun registerAsMember()").substringBefore("/** 回话")
         assertTrue(reg.contains("WatchMember.registerFrame("))
-        assertTrue(reg.contains("WatchMember.capabilityReportFrame("))
+        assertTrue("登记后没报能力", reg.contains("sendRawJson(capabilityReport(now))"))
+        assertTrue(reportBuilder().contains("WatchMember.capabilityReportFrame("))
     }
+
+    /** 登记和重报共用的能力上报(带设备自述)。 */
+    private fun reportBuilder(): String =
+        client.substringAfter("private fun capabilityReport(nowMs: Long)").substringBefore("// ----")
 
     @Test
     fun `the watch reports what it can do right now and reports again when that changes`() {
-        val reg = client.substringAfter("private suspend fun registerAsMember()").substringBefore("/** 回话")
-        assertTrue("登记时报的不是此刻做得了的动作", reg.contains("capabilityReportFrame(deviceId, now, memberActions())"))
+        val report = reportBuilder()
+        assertTrue("报的不是此刻做得了的动作", report.contains("actions = memberActions()"))
+        assertTrue("做不了的动作没带原因", report.contains("unavailable = memberUnavailable()"))
+        val refresh = client.substringAfter("suspend fun refreshCapabilityReport()").substringBefore("\n    }")
+        assertTrue("重报的不是同一份能力上报", refresh.contains("sendRawJson(capabilityReport("))
         assertTrue("Application 没告诉连接层此刻能做什么", app.contains("aipClient.memberActions = {"))
+        assertTrue("Application 没告诉连接层做不了的原因", app.contains("aipClient.memberUnavailable = {"))
         val activity = source("src/main/java/com/galaxy/wear/MainActivity.kt")
         val resume = activity.substringAfter("override fun onResume()").substringBefore("override fun onCreate(")
         assertTrue("回到界面时没有重看权限", resume.contains("refreshMemberActions()"))
