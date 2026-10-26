@@ -1,5 +1,9 @@
 package com.galaxy.wear.data
 
+import com.galaxy.wear.ui.HapticType
+import com.ufo.galaxy.shared.protocol.DeviceSelfDescription
+import com.ufo.galaxy.shared.protocol.DeviceSelfDescription.Effect
+import com.ufo.galaxy.shared.protocol.DeviceSelfDescription.Params
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -64,6 +68,10 @@ internal object WatchMember {
     fun reportable(available: (Need) -> Boolean): List<String> =
         SUPPORTED_ACTIONS.filter { action -> NEEDS[action]?.let(available) ?: true }
 
+    /** 表上有、此刻做不了的动作 → 原因。[blocker] 给每个前提此刻缺什么(具备就是 null)。 */
+    fun unavailable(blocker: (Need) -> String?): Map<String, String> =
+        SUPPORTED_ACTIONS.mapNotNull { action -> NEEDS[action]?.let(blocker)?.let { action to it } }.toMap()
+
     /**
      * 每个动作对智能体说的一句话(说效果,不说实现)。智能体把每台设备当成一个整体来看、自己决定让谁做什么
      * (V2 `core/device_onboarding/device_card.py`):它在设备整体卡里读到的就是这几句。
@@ -75,6 +83,64 @@ internal object WatchMember {
         "heart_rate" to "现测一次戴表人的心率(要几秒钟;表没戴好会测不出来),回每分钟多少下",
         "steps" to "读戴表人今天走了多少步,以及从几点开始算的",
     )
+
+    /** 每个动作做了会怎样(设备自述的 `effect`,V2 的权限门要读)。 */
+    val ACTION_EFFECTS: Map<String, String> = mapOf(
+        "notify" to Effect.NOTIFY,
+        "haptic" to Effect.NOTIFY,
+        "get_status" to Effect.READ,
+        "heart_rate" to Effect.READ,
+        "steps" to Effect.READ,
+    )
+
+    /** 每个动作的参数格式(与 [com.galaxy.wear.domain.AgentCommandExecutor] 读的一致)。 */
+    val ACTION_PARAMS: Map<String, JsonObject> = mapOf(
+        "notify" to Params.obj(
+            "title" to Params.string("标题", maxLength = 60),
+            "text" to Params.string("正文", maxLength = 500),
+            required = listOf("text"),
+        ),
+        "haptic" to Params.obj(
+            "pattern" to Params.oneOf(
+                HapticType.values().filter { it.alerting }.map { it.name.lowercase() },
+                "震动的样式;不给按「来消息」",
+            ),
+        ),
+    )
+
+    /** 一句形态描述,给模型看(设备自述的 `about`)。 */
+    const val ABOUT = "戴在手腕上的手表。屏幕很小,适合看一两句话、点一下;抬腕就能看到、震一下就能察觉;" +
+        "有心率和计步传感器。"
+
+    /**
+     * 这块表的设备自述(`device_self/1`,V2 `core/device_self.py`)。做得了的动作进 `actions`;
+     * 表上有、此刻做不了的进 `unavailable` 附原因([unavailable] 由调用方给,原因来自传感器 / 权限检查)。
+     */
+    fun selfDescription(
+        actions: List<String>,
+        unavailable: Map<String, String> = emptyMap(),
+        deviceName: String = "",
+    ): JsonObject = DeviceSelfDescription(
+        name = deviceName,
+        kind = DEVICE_TYPE,
+        about = ABOUT,
+        actions = actions.map { a ->
+            DeviceSelfDescription.Action(
+                name = a,
+                description = ACTION_DESCRIPTIONS[a] ?: a,
+                effect = ACTION_EFFECTS[a] ?: Effect.ACT,
+                params = ACTION_PARAMS[a] ?: DeviceSelfDescription.NO_PARAMS,
+            )
+        },
+        unavailable = unavailable.filterKeys { it !in actions }.map { (a, why) -> DeviceSelfDescription.Unavailable(a, why) },
+        declares = DeviceSelfDescription.Declares(
+            answersDecisions = true,
+            // 进度只在通话界面上显示(交给智能体的那件事),不收请求进度帧
+            showsRequestProgress = false,
+            hostsAgent = "",
+            tailnet = DeviceSelfDescription.Tailnet.EMBEDDED,
+        ),
+    ).toJson()
 
     /**
      * `device_register`。
@@ -108,14 +174,25 @@ internal object WatchMember {
         )
     }
 
-    /** `capability_report`:这台手表能替智能体做的动作([actions] 默认全报,实际调用方传 [reportable] 的结果)。 */
-    fun capabilityReportFrame(deviceId: String, nowMs: Long, actions: List<String> = SUPPORTED_ACTIONS): JsonObject = buildJsonObject {
+    /**
+     * `capability_report`:这台手表能替智能体做的动作([actions] 默认全报,实际调用方传 [reportable] 的结果)。
+     *
+     * 带设备自述 `self_description`(V2 以它为准);下面的散字段过渡期照发,给还没升级的中心读。
+     */
+    fun capabilityReportFrame(
+        deviceId: String,
+        nowMs: Long,
+        actions: List<String> = SUPPORTED_ACTIONS,
+        unavailable: Map<String, String> = emptyMap(),
+        deviceName: String = "",
+    ): JsonObject = buildJsonObject {
         put("version", AIP_VERSION)
         put("type", "capability_report")
         put("device_id", deviceId)
         put("timestamp", nowMs)
         put("platform", PLATFORM)
         put("supported_actions", JsonArray(actions.map { JsonPrimitive(it) }))
+        put(DeviceSelfDescription.KEY, selfDescription(actions, unavailable, deviceName))
         // 智能体要问人一件事(decision_request)时,手表能把问题摆到戴表的人面前、把回答交回去。
         // 中心按这一项决定问不问这块表,不按设备类型认(V2 pending_decision_registry.declares_decision_support)。
         put("answers_decisions", true)

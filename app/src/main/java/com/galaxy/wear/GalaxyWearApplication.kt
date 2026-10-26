@@ -349,6 +349,7 @@ class GalaxyWearApplication : Application() {
             AipTransportManager.getInstance().registerAdapter("websocket", wsAdapter)
             // 登记时报的是此刻真做得了的动作(心率 / 计步看传感器与权限)
             aipClient.memberActions = { currentMemberActions().also { reportedActions = it } }
+            aipClient.memberUnavailable = { currentUnavailable() }
         } catch (e: Exception) {
             Log.e(TAG, "FATAL: AIPClient initialization failed: ${e.message}", e)
             // aipClient remains uninitialized; isAipClientReady() will return false.
@@ -707,11 +708,14 @@ class GalaxyWearApplication : Application() {
     @Volatile
     private var reportedActions: List<String>? = null
 
-    private fun currentMemberActions(): List<String> = WatchMember.reportable { need ->
-        when (need) {
-            WatchMember.Need.HEART_RATE -> BodyReadings.heartRateBlocker(this) == null
-            WatchMember.Need.STEPS -> stepTracker.blocker() == null
-        }
+    private fun currentMemberActions(): List<String> = WatchMember.reportable { need -> blocker(need) == null }
+
+    /** 表上有、此刻做不了的动作 → 原因(没有传感器、没给权限),进设备自述的 `unavailable`。 */
+    private fun currentUnavailable(): Map<String, String> = WatchMember.unavailable(::blocker)
+
+    private fun blocker(need: WatchMember.Need): String? = when (need) {
+        WatchMember.Need.HEART_RATE -> BodyReadings.heartRateBlocker(this)
+        WatchMember.Need.STEPS -> stepTracker.blocker()
     }
 
     /**

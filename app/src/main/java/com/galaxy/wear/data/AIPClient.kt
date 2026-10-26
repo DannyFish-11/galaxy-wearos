@@ -158,6 +158,18 @@ class AIPClient(
     @Volatile
     var memberActions: () -> List<String> = { WatchMember.reportable { false } }
 
+    /** 表上有、此刻做不了的动作 → 原因(进设备自述的 `unavailable`)。由 Application 设。 */
+    @Volatile
+    var memberUnavailable: () -> Map<String, String> = { emptyMap() }
+
+    private fun capabilityReport(nowMs: Long) = WatchMember.capabilityReportFrame(
+        deviceId = deviceId,
+        nowMs = nowMs,
+        actions = memberActions(),
+        unavailable = memberUnavailable(),
+        deviceName = android.os.Build.MODEL.orEmpty(),
+    )
+
     // -----------------------------------------------------------------
     // Lifecycle
     // -----------------------------------------------------------------
@@ -542,7 +554,7 @@ class AIPClient(
                     nowMs = now,
                 ),
             )
-            sendRawJson(WatchMember.capabilityReportFrame(deviceId, now, memberActions()))
+            sendRawJson(capabilityReport(now))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -557,7 +569,7 @@ class AIPClient(
     suspend fun refreshCapabilityReport() {
         if (_connectionState.value != AIPConnectionState.AUTHENTICATED) return
         try {
-            sendRawJson(WatchMember.capabilityReportFrame(deviceId, System.currentTimeMillis(), memberActions()))
+            sendRawJson(capabilityReport(System.currentTimeMillis()))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
