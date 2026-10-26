@@ -119,6 +119,8 @@ internal object WatchMember {
         // 智能体要问人一件事(decision_request)时,手表能把问题摆到戴表的人面前、把回答交回去。
         // 中心按这一项决定问不问这块表,不按设备类型认(V2 pending_decision_registry.declares_decision_support)。
         put("answers_decisions", true)
+        // 智能体主动说的一句话(agent_message)手表会弹通知、记进会话;中心按这一项决定发不发给这块表
+        put("shows_messages", true)
         // 网关的处理器读 capability_schemas[].description,原样交给智能体
         put(
             "capability_schemas",

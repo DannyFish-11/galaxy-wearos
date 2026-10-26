@@ -126,7 +126,10 @@ class WatchMemberFramesTest {
     @Test
     fun `the report says the watch can answer the agent's questions`() {
         // 中心问不问这块表,看它自己声明的这一项,不看它是什么类型的设备
-        assertTrue(WatchMember.capabilityReportFrame("w-1", 2L)["answers_decisions"]!!.jsonPrimitive.boolean)
+        val f = WatchMember.capabilityReportFrame("w-1", 2L)
+        assertTrue(f["answers_decisions"]!!.jsonPrimitive.boolean)
+        assertTrue("手表会显示智能体主动说的话", f["shows_messages"]!!.jsonPrimitive.boolean)
+        assertFalse("手表不显示请求进度,不声明", f.containsKey("shows_request_progress"))
     }
 
     @Test
