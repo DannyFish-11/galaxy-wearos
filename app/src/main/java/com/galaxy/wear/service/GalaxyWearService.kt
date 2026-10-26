@@ -19,6 +19,8 @@ import com.galaxy.wear.MainActivity
 import com.galaxy.wear.domain.HomeStatus
 import com.galaxy.wear.sensing.InterruptibilityMonitor
 import com.galaxy.wear.sensing.InterruptibilityReport
+import com.galaxy.wear.sensing.AndroidWatchState
+import com.galaxy.wear.sensing.WatchState
 import com.galaxy.wear.sensing.InterruptibilityUplinkPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -360,21 +362,24 @@ class GalaxyWearService : LifecycleService() {
     }
 
     /**
-     * UNKNOWN 也要上报:上游必须能区分"手表在,但没有传感证据"与"根本没有手表"。
-     * 节流策略会把它压到最多每心跳一条。
+     * 这块表此刻的状态跟着一条心跳上行(可打扰性在里面,见 [WatchState])。
+     * UNKNOWN 也照发:状态里没有 `interruptible`,中心就撤掉这块表上一份的判断,当作不知道。
+     * 节流策略会把它压到最多每心跳一条(屏幕、充电、通话变了也发)。
      */
     private suspend fun uplinkOnce(app: GalaxyWearApplication, report: InterruptibilityReport) {
         val now = System.currentTimeMillis()
-        if (!uplinkPolicy.shouldSend(report, now)) return
+        val readings = AndroidWatchState.read(applicationContext)
+        val others = WatchState.uplinkKey(readings)
+        if (!uplinkPolicy.shouldSend(report, now, others)) return
         if (!app.isAipClientReady()) return
         try {
-            app.aipClient.sendInterruptibility(report, now)
+            app.aipClient.sendState(WatchState.build(report, readings), now)
             // 只有真发出去了才记账,失败时下一拍会重试。
-            uplinkPolicy.recordSent(report, now)
+            uplinkPolicy.recordSent(report, now, others)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w(TAG, "可打扰性上报失败(下一拍重试): ${e.message}")
+            Log.w(TAG, "状态上报失败(下一拍重试): ${e.message}")
         }
     }
 

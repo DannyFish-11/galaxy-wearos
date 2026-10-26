@@ -4,6 +4,7 @@ import com.galaxy.wear.ui.HapticType
 import com.ufo.galaxy.shared.protocol.DeviceSelfDescription
 import com.ufo.galaxy.shared.protocol.DeviceSelfDescription.Effect
 import com.ufo.galaxy.shared.protocol.DeviceSelfDescription.Params
+import com.ufo.galaxy.shared.protocol.DeviceState
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -181,6 +182,18 @@ internal object WatchMember {
      *
      * 带设备自述 `self_description`(V2 以它为准);下面的散字段过渡期照发,给还没升级的中心读。
      */
+    /**
+     * 这块表此刻的状态,放在心跳帧的 `payload.state` 里(V2 `core/device_state.py` 读,整份替换上一份)。
+     * 状态由 [com.galaxy.wear.sensing.WatchState] 拼:电量、充电、屏幕、通话、能不能打扰和一句原因。
+     */
+    fun stateFrame(deviceId: String, state: JsonObject, nowMs: Long): JsonObject = buildJsonObject {
+        put("version", AIP_VERSION)
+        put("type", "heartbeat")
+        put("device_id", deviceId)
+        put("timestamp", nowMs)
+        put("payload", buildJsonObject { put(DeviceState.KEY, state) })
+    }
+
     fun capabilityReportFrame(
         deviceId: String,
         nowMs: Long,
