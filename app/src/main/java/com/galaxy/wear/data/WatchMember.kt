@@ -178,11 +178,6 @@ internal object WatchMember {
     }
 
     /**
-     * `capability_report`:这台手表能替智能体做的动作([actions] 默认全报,实际调用方传 [reportable] 的结果)。
-     *
-     * 带设备自述 `self_description`(V2 以它为准);下面的散字段过渡期照发,给还没升级的中心读。
-     */
-    /**
      * 这块表此刻的状态,放在心跳帧的 `payload.state` 里(V2 `core/device_state.py` 读,整份替换上一份)。
      * 状态由 [com.galaxy.wear.sensing.WatchState] 拼:电量、充电、屏幕、通话、能不能打扰和一句原因。
      */
@@ -194,6 +189,11 @@ internal object WatchMember {
         put("payload", buildJsonObject { put(DeviceState.KEY, state) })
     }
 
+    /**
+     * `capability_report`:这台手表能替智能体做的动作([actions] 默认全报,实际调用方传 [reportable] 的结果)。
+     *
+     * 带设备自述 `self_description`(V2 以它为准);下面的散字段过渡期照发,给还没升级的中心读。
+     */
     fun capabilityReportFrame(
         deviceId: String,
         nowMs: Long,
