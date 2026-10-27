@@ -120,6 +120,36 @@ class WatchMemberFramesTest {
     fun `the executor and the advertised list cannot drift apart`() {
         // 清单里的每一项都得在 AgentCommandExecutor 里有实现(AgentCommandTest 逐项验),
         // 反过来,清单不许悄悄变:加动作就得同时改这里和执行器。
-        assertEquals(listOf("notify", "haptic", "get_status"), WatchMember.SUPPORTED_ACTIONS)
+        assertEquals(listOf("notify", "haptic", "get_status", "heart_rate", "steps"), WatchMember.SUPPORTED_ACTIONS)
+    }
+
+    @Test
+    fun `the report says the watch can answer the agent's questions`() {
+        // 中心问不问这块表,看它自己声明的这一项,不看它是什么类型的设备
+        val f = WatchMember.capabilityReportFrame("w-1", 2L)
+        assertTrue(f["answers_decisions"]!!.jsonPrimitive.boolean)
+        // 智能体主动说的话走手表自己的 notify 动作(V2 ask_human__notify 调它),不再另有一项声明
+        assertFalse(f.containsKey("shows_messages"))
+        assertFalse("手表不显示请求进度,不声明", f.containsKey("shows_request_progress"))
+    }
+
+    @Test
+    fun `a watch reports heart rate and steps only when it can actually read them`() {
+        // 报了做不了的动作,智能体就会去调,只能等来一句「做不了」
+        assertEquals(listOf("notify", "haptic", "get_status"), WatchMember.reportable { false })
+        assertEquals(
+            listOf("notify", "haptic", "get_status", "heart_rate"),
+            WatchMember.reportable { it == WatchMember.Need.HEART_RATE },
+        )
+        assertEquals(WatchMember.SUPPORTED_ACTIONS, WatchMember.reportable { true })
+    }
+
+    @Test
+    fun `the report carries exactly the actions it is given each with its description`() {
+        val f = WatchMember.capabilityReportFrame("w-1", 2L, listOf("notify", "steps"))
+        assertEquals(listOf("notify", "steps"), (f["supported_actions"] as JsonArray).map { it.jsonPrimitive.content })
+        val schemas = (f["capability_schemas"] as JsonArray).map { it as JsonObject }
+        assertEquals(listOf("notify", "steps"), schemas.map { it["action"]!!.jsonPrimitive.content })
+        assertTrue(schemas.last()["description"]!!.jsonPrimitive.content.contains("步"))
     }
 }

@@ -5,8 +5,7 @@ import android.os.PowerManager
 import android.util.Log
 import com.galaxy.wear.BuildConfig
 import com.galaxy.wear.GalaxyWearApplication
-import com.galaxy.wear.sensing.InterruptibilityReport
-import com.galaxy.wear.sensing.toWirePayload
+import com.ufo.galaxy.shared.protocol.DeviceState
 import com.ufo.galaxy.shared.protocol.ReconnectionConfig
 import com.ufo.galaxy.shared.protocol.AuthMessage
 import com.ufo.galaxy.shared.protocol.MsgType
@@ -151,6 +150,24 @@ class AIPClient(
     private var serverUrl: String = ""
     private var token: String = ""
     private var deviceId: String = ""
+
+    /**
+     * 此刻真做得了的动作(看传感器与权限),登记时报给网关。由 Application 设;没设时只报不依赖传感器的那几个。
+     */
+    @Volatile
+    var memberActions: () -> List<String> = { WatchMember.reportable { false } }
+
+    /** 表上有、此刻做不了的动作 → 原因(进设备自述的 `unavailable`)。由 Application 设。 */
+    @Volatile
+    var memberUnavailable: () -> Map<String, String> = { emptyMap() }
+
+    private fun capabilityReport(nowMs: Long) = WatchMember.capabilityReportFrame(
+        deviceId = deviceId,
+        nowMs = nowMs,
+        actions = memberActions(),
+        unavailable = memberUnavailable(),
+        deviceName = android.os.Build.MODEL.orEmpty(),
+    )
 
     // -----------------------------------------------------------------
     // Lifecycle
@@ -507,17 +524,14 @@ class AIPClient(
     }
 
     /**
-     * 上报可打扰性 —— 手表回答"现在能不能打扰他",而**不**交出身体数据。
+     * 上报这块表此刻的状态(心跳帧的 `payload.state`,V2 `core/device_state.py` 读),
+     * 可打扰性也在里面 —— 手表回答"现在能不能打扰他",而**不**交出身体数据。
      *
-     * 载荷完全由 [toWirePayload] 生成,其键集合被
-     * `InterruptibilityWireContractTest` 钉死为 `INTERRUPTIBILITY_WIRE_KEYS`。
+     * 状态由 [com.galaxy.wear.sensing.WatchState] 拼,只有 `DeviceState` 那几个键(`WatchStateTest` 钉死);
      * 心率/加速度/静息基线这些原始信号只在手表本地参与运算,不经过这条路。
      */
-    suspend fun sendInterruptibility(
-        report: InterruptibilityReport,
-        timestampMs: Long = System.currentTimeMillis(),
-    ) {
-        sendCommand("interruptibility", report.toWirePayload(timestampMs = timestampMs))
+    suspend fun sendState(state: DeviceState, timestampMs: Long = System.currentTimeMillis()) {
+        sendRawJson(WatchMember.stateFrame(deviceId, state.toJson(), timestampMs))
     }
 
     /**
@@ -536,11 +550,26 @@ class AIPClient(
                     nowMs = now,
                 ),
             )
-            sendRawJson(WatchMember.capabilityReportFrame(deviceId, now))
+            sendRawJson(capabilityReport(now))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.w(GalaxyWearApplication.TAG, "成员登记没发出去(下次重连再试): ${e.message}")
+        }
+    }
+
+    /**
+     * 能做的动作变了(用户给了 / 收回了心率、计步权限)就重报一次,智能体那边的设备卡跟着变。
+     * 还没认证就不报 —— 认证通过时本来就会报。
+     */
+    suspend fun refreshCapabilityReport() {
+        if (_connectionState.value != AIPConnectionState.AUTHENTICATED) return
+        try {
+            sendRawJson(capabilityReport(System.currentTimeMillis()))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(GalaxyWearApplication.TAG, "重报能力没发出去(下次重连再报): ${e.message}")
         }
     }
 
