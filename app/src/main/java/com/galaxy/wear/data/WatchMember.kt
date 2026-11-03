@@ -209,8 +209,11 @@ internal object WatchMember {
         put("supported_actions", JsonArray(actions.map { JsonPrimitive(it) }))
         put(DeviceSelfDescription.KEY, selfDescription(actions, unavailable, deviceName))
         // 智能体要问人一件事(decision_request)时,手表能把问题摆到戴表的人面前、把回答交回去。
-        // 中心按这一项决定问不问这块表,不按设备类型认(V2 pending_decision_registry.declares_decision_support)。
+        // 中心按这一项决定问不问这块表,不按设备类型认(V2 core/approvers.py)。
         put("answers_decisions", true)
+        // 同一句话的另一个名字:收得到 decision_request、会经 human_input 回 decision_id 与 selected_option
+        // (V2 core/approvers.py 读 `approvals`,docs/DEVICE_CLIENT_REQUIREMENTS.md W1)。不说中心也认手表,那只是给旧版留的兼容。
+        put("approvals", true)
         // 网关的处理器读 capability_schemas[].description,原样交给智能体
         put(
             "capability_schemas",
