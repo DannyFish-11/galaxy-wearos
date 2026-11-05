@@ -1,6 +1,9 @@
 package com.galaxy.wear.domain
 
+import com.galaxy.wear.sensing.StepDay
 import com.galaxy.wear.ui.HapticType
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -8,6 +11,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlin.math.roundToInt
 
 /**
  * 智能体经 `devices__invoke` 下发给手表的一个动作。
@@ -38,8 +42,11 @@ data class AgentCommandResult(
     }
 }
 
+/** 这块表做不了这个动作(没有传感器、没给权限),[message] 是对智能体说的原因。 */
+class WatchActionUnavailable(reason: String) : Exception(reason)
+
 /**
- * 动作要碰的那些「真东西」(通知、震动、状态)。执行器只管判定与编排,真正的 Android 调用由实现方做 ——
+ * 动作要碰的那些「真东西」(通知、震动、状态、传感器)。执行器只管判定与编排,真正的 Android 调用由实现方做 ——
  * 所以执行器能直接在 JVM 上测,不需要 Context。
  */
 interface WatchEffects {
@@ -51,6 +58,12 @@ interface WatchEffects {
 
     /** 手表此刻的状态(只读)。 */
     fun status(): JsonObject
+
+    /** 现测几秒心率,返回这几秒里传感器认为可信的读数(每分钟多少下)。做不了就抛 [WatchActionUnavailable]。 */
+    suspend fun heartRateSamples(): List<Float>
+
+    /** 今天的步数账;今天还没读到过计步数就是 null。做不了就抛 [WatchActionUnavailable]。 */
+    fun stepsToday(): StepDay?
 }
 
 object AgentCommandParser {
@@ -77,31 +90,53 @@ object AgentCommandParser {
  *    相位切换)是伴随用户自己的动作的反馈,由智能体触发就成了噪音,也会稀释「手感 = 发生了什么」的词汇。
  *  * **输入有上限**:标题 60 字、正文 500 字。手表屏幕小,超长文本不是「显示得下」的问题,
  *    而是智能体没想清楚要说什么。
+ *  * **身体数据只在被问到时读一次**:心率、步数不常驻上报,智能体调一次读一次,回的是那一次的数。
  */
 class AgentCommandExecutor(
     private val effects: WatchEffects,
     private val rememberLast: Int = DEFAULT_REMEMBER,
+    private val now: () -> Long = System::currentTimeMillis,
 ) {
     private val done = object : LinkedHashMap<String, AgentCommandResult>(16, 0.75f, false) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, AgentCommandResult>?): Boolean =
             size > rememberLast
     }
 
-    fun execute(cmd: AgentCommand): AgentCommandResult {
-        synchronized(done) { done[cmd.commandId]?.let { return it } }
+    /** 还在做的动作。测心率要几秒,这期间重发的同一个 `command_id` 等这一次的结果,不再测一遍。 */
+    private val running = HashMap<String, CompletableDeferred<AgentCommandResult>>()
+
+    suspend fun execute(cmd: AgentCommand): AgentCommandResult {
+        val mine = CompletableDeferred<AgentCommandResult>()
+        val ongoing = synchronized(done) {
+            done[cmd.commandId]?.let { return it }
+            running[cmd.commandId].also { if (it == null) running[cmd.commandId] = mine }
+        }
+        if (ongoing != null) return ongoing.await()
         val result = try {
-            run(cmd)
+            perform(cmd)
+        } catch (e: CancellationException) {
+            synchronized(done) { running.remove(cmd.commandId) }
+            mine.cancel(e)
+            throw e
+        } catch (e: WatchActionUnavailable) {
+            AgentCommandResult.fail(e.message ?: "这块表做不了 ${cmd.action}")
         } catch (e: Exception) {
             AgentCommandResult.fail("手表执行 ${cmd.action} 时出错:${e.message ?: e.javaClass.simpleName}")
         }
-        synchronized(done) { done[cmd.commandId] = result }
+        synchronized(done) {
+            done[cmd.commandId] = result
+            running.remove(cmd.commandId)
+        }
+        mine.complete(result)
         return result
     }
 
-    private fun run(cmd: AgentCommand): AgentCommandResult = when (cmd.action) {
+    private suspend fun perform(cmd: AgentCommand): AgentCommandResult = when (cmd.action) {
         "notify" -> notify(cmd.params)
         "haptic" -> haptic(cmd.params)
         "get_status" -> AgentCommandResult.ok(effects.status())
+        "heart_rate" -> heartRate()
+        "steps" -> steps()
         else -> AgentCommandResult.fail(
             "手表不支持动作 '${cmd.action}'(支持:${SUPPORTED.joinToString()})",
         )
@@ -139,12 +174,42 @@ class AgentCommandExecutor(
         }
     }
 
+    private suspend fun heartRate(): AgentCommandResult {
+        val bpm = effects.heartRateSamples().filter { it in MIN_BPM..MAX_BPM }.sorted()
+        if (bpm.isEmpty()) {
+            return AgentCommandResult.fail("这几秒没测到心率:表没戴好,或传感器还没读稳(戴紧一点再测)")
+        }
+        return AgentCommandResult.ok(
+            buildJsonObject {
+                put("bpm", bpm[bpm.size / 2].roundToInt())
+                put("samples", bpm.size)
+                put("measured_at", now())
+            },
+        )
+    }
+
+    private fun steps(): AgentCommandResult {
+        val day = effects.stepsToday()
+            ?: return AgentCommandResult.fail("今天还没记到步数(刚开机、刚授权计步,或今天还没走动),走几步之后再问")
+        return AgentCommandResult.ok(
+            buildJsonObject {
+                put("steps", day.steps)
+                put("date", day.date)
+                put("counting_since", day.sinceMs)
+            },
+        )
+    }
+
     private fun JsonObject.str(key: String): String = (this[key] as? JsonPrimitive)?.contentOrNull.orEmpty()
 
     companion object {
         const val MAX_TITLE = 60
         const val MAX_TEXT = 500
         const val DEFAULT_REMEMBER = 32
+
+        /** 心率读数的合理范围;之外的是没贴合手腕时的噪声。 */
+        const val MIN_BPM = 25f
+        const val MAX_BPM = 250f
 
         private val SUPPORTED = com.galaxy.wear.data.WatchMember.SUPPORTED_ACTIONS
         private val ALLOWED_HAPTICS = HapticType.values().filter { it.alerting }

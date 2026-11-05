@@ -3,7 +3,7 @@ package com.galaxy.wear.sensing
 import kotlin.math.abs
 
 /**
- * 上行节流 —— 决定"这一拍要不要真的发出去"。
+ * 上行节流 —— 决定"这一拍要不要真的发出去"(状态心跳,见 `WatchState`)。
  *
  * 手表每几十秒算一次可打扰性,但**没必要**每次都上行:BLE/MQTT 链路上的
  * 每一条消息都要唤醒无线电,是手表上最耗电的动作之一。同时又不能只按固定
@@ -26,25 +26,33 @@ class InterruptibilityUplinkPolicy(
     private var lastSentBand: InterruptibilityBand? = null
     private var lastSentScore: Float = 0f
     private var lastSentAtMs: Long = 0L
+    private var lastSentOthers: Any? = null
 
-    fun shouldSend(report: InterruptibilityReport, nowMs: Long): Boolean {
+    /**
+     * @param others 状态里可打扰性以外的部分(屏幕、充电、通话、按一成算的电量,见 `WatchState.uplinkKey`);
+     *               变了也发 —— 它和可打扰性一起跟着同一条心跳上行。
+     */
+    fun shouldSend(report: InterruptibilityReport, nowMs: Long, others: Any? = null): Boolean {
         val previousBand = lastSentBand ?: return true
         if (report.band != previousBand) return true
         if (abs(report.score - lastSentScore) >= scoreDelta) return true
+        if (others != lastSentOthers) return true
         return nowMs - lastSentAtMs >= heartbeatMs
     }
 
     /** 只有**确认发出去了**才记账 —— 发送失败时不更新,下一拍会重试。 */
-    fun recordSent(report: InterruptibilityReport, nowMs: Long) {
+    fun recordSent(report: InterruptibilityReport, nowMs: Long, others: Any? = null) {
         lastSentBand = report.band
         lastSentScore = report.score
         lastSentAtMs = nowMs
+        lastSentOthers = others
     }
 
     fun reset() {
         lastSentBand = null
         lastSentScore = 0f
         lastSentAtMs = 0L
+        lastSentOthers = null
     }
 
     companion object {

@@ -40,12 +40,17 @@ class PersistentServiceSurvivesNewAndroidTest {
 
     @Test
     fun `on Android 14 and up the service starts as specialUse not dataSync`() {
-        val body = service.substringAfter("private fun startForeground()")
-        val modern = body.substringBefore("Build.VERSION_CODES.Q")
-        assertTrue(modern.contains("UPSIDE_DOWN_CAKE"))
-        assertTrue(modern.contains("FOREGROUND_SERVICE_TYPE_SPECIAL_USE"))
+        for (fromUi in listOf(true, false)) for (granted in listOf(true, false)) {
+            val modern = ForegroundTypes.forWatch(34, granted, fromUi)
+            assertTrue(ForegroundTypes.Kind.SPECIAL_USE in modern)
+            assertFalse("Android 14+ 不许用 dataSync(15 起每天只许跑 6 小时)", ForegroundTypes.Kind.DATA_SYNC in modern)
+        }
         // 老系统(29..33)仍用 dataSync,那里没有这条期限
-        assertTrue(body.contains("FOREGROUND_SERVICE_TYPE_DATA_SYNC"))
+        assertTrue(ForegroundTypes.forWatch(33, true, true) == setOf(ForegroundTypes.Kind.DATA_SYNC))
+        // 服务真的按它起
+        val body = service.substringAfter("private fun startForeground(fromVisibleUi: Boolean)").substringBefore("private fun typeBits(")
+        assertTrue(body.contains("ForegroundTypes.forWatch("))
+        assertTrue(body.contains("FOREGROUND_SERVICE_TYPE_SPECIAL_USE") || service.contains("FOREGROUND_SERVICE_TYPE_SPECIAL_USE"))
     }
 
     @Test
@@ -59,7 +64,7 @@ class PersistentServiceSurvivesNewAndroidTest {
     fun `starting the service never throws out of a broadcast receiver`() {
         assertFalse("BootReceiver 又在直接调 startForegroundService", boot.contains("startForegroundService"))
         assertTrue(boot.contains("GalaxyWearService.start(context)"))
-        val start = service.substringAfter("fun start(context: Context): Boolean")
+        val start = service.substringAfter("fun start(context: Context, fromVisibleUi: Boolean = false): Boolean").substringBefore("const val EXTRA_FROM_VISIBLE_UI")
         assertTrue("start() 必须吞掉启动失败并如实返回 false", start.contains("catch (e: Exception)") && start.contains("false"))
     }
 
@@ -67,7 +72,7 @@ class PersistentServiceSurvivesNewAndroidTest {
     fun `the app pulls the service up when it is opened`() {
         assertTrue(
             "首次启动不拉服务 —— 装完不重启就没有保活",
-            mainActivity.contains("GalaxyWearService.start(this)"),
+            mainActivity.contains("GalaxyWearService.start(this, fromVisibleUi = true)"),
         )
     }
 }

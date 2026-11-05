@@ -24,7 +24,12 @@ import com.ufo.galaxy.transport.AipTransportManager
 import com.galaxy.wear.tile.GalaxyTileService
 import com.galaxy.wear.domain.AgentCommandExecutor
 import com.galaxy.wear.domain.AgentCommandParser
+import com.galaxy.wear.domain.WatchActionUnavailable
 import com.galaxy.wear.domain.WatchEffects
+import com.galaxy.wear.data.WatchMember
+import com.galaxy.wear.sensing.BodyReadings
+import com.galaxy.wear.sensing.StepDay
+import com.galaxy.wear.sensing.StepTracker
 import com.galaxy.wear.domain.parseDecisionOptions
 import com.galaxy.wear.ui.components.IslandItem
 import com.galaxy.wear.ui.HapticType
@@ -318,6 +323,9 @@ class GalaxyWearApplication : Application() {
             )
         )
 
+        // 今天的步数要从早上就开始记,不能等智能体问起才开始(那时起点就是「现在」)
+        runCatching { stepTracker.ensureStarted() }.onFailure { Log.w(TAG, "计步没能开始: ${it.message}") }
+
         // WARNING-7: Wrap AIPClient initialization to prevent UninitializedPropertyAccessException
         // on subsequent accesses if the constructor throws.
         try {
@@ -339,6 +347,9 @@ class GalaxyWearApplication : Application() {
                 override fun sendJson(json: String): Boolean = aipClient.sendJson(json)
             }
             AipTransportManager.getInstance().registerAdapter("websocket", wsAdapter)
+            // 登记时报的是此刻真做得了的动作(心率 / 计步看传感器与权限)
+            aipClient.memberActions = { currentMemberActions().also { reportedActions = it } }
+            aipClient.memberUnavailable = { currentUnavailable() }
         } catch (e: Exception) {
             Log.e(TAG, "FATAL: AIPClient initialization failed: ${e.message}", e)
             // aipClient remains uninitialized; isAipClientReady() will return false.
@@ -687,8 +698,36 @@ class GalaxyWearApplication : Application() {
 
     // ── 智能体经 devices__invoke 下发给手表的动作 ───────────────────────────
 
-    /** 手表能替智能体做的事的真正实现(通知 / 触觉 / 状态)。判定与编排在 [AgentCommandExecutor] 里，可在 JVM 上测。 */
+    /** 手表能替智能体做的事的真正实现(通知 / 触觉 / 状态 / 心率 / 步数)。判定与编排在 [AgentCommandExecutor] 里，可在 JVM 上测。 */
     private val agentCommands: AgentCommandExecutor by lazy { AgentCommandExecutor(AppWatchEffects()) }
+
+    /** 今天的步数账。有计步传感器、给了「体能活动」权限才开始记。 */
+    private val stepTracker: StepTracker by lazy { StepTracker(this) { encryptedPrefs } }
+
+    /** 上次报给网关的动作清单;变了才重报。 */
+    @Volatile
+    private var reportedActions: List<String>? = null
+
+    private fun currentMemberActions(): List<String> = WatchMember.reportable { need -> blocker(need) == null }
+
+    /** 表上有、此刻做不了的动作 → 原因(没有传感器、没给权限),进设备自述的 `unavailable`。 */
+    private fun currentUnavailable(): Map<String, String> = WatchMember.unavailable(::blocker)
+
+    private fun blocker(need: WatchMember.Need): String? = when (need) {
+        WatchMember.Need.HEART_RATE -> BodyReadings.heartRateBlocker(this)
+        WatchMember.Need.STEPS -> stepTracker.blocker()
+    }
+
+    /**
+     * 权限可能变了(回到界面、权限对话框关了):给了计步就开始记,能做的动作变了就重报 ——
+     * 否则智能体的设备卡上要么缺了刚给的心率,要么留着已经收回的。
+     */
+    fun refreshMemberActions() {
+        stepTracker.ensureStarted()
+        if (!isAipClientReady()) return
+        if (currentMemberActions() == reportedActions) return
+        appScope.launch { aipClient.refreshCapabilityReport() }
+    }
 
     private inner class AppWatchEffects : WatchEffects {
         override fun notify(title: String, text: String, replyExpected: Boolean, conversationId: String): Boolean {
@@ -711,6 +750,24 @@ class GalaxyWearApplication : Application() {
             put("connection", aipClient.connectionState.value.name.lowercase())
             put("app_version", BuildConfig.VERSION_NAME)
             put("notifications_enabled", WatchNotifications.canNotify(this@GalaxyWearApplication))
+            val battery = getSystemService(android.os.BatteryManager::class.java)
+            if (battery != null) {
+                battery.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                    .takeIf { it in 0..100 }
+                    ?.let { put("battery_percent", it) }
+                put("charging", battery.isCharging)
+            }
+        }
+
+        override suspend fun heartRateSamples(): List<Float> {
+            BodyReadings.heartRateBlocker(this@GalaxyWearApplication)?.let { throw WatchActionUnavailable(it) }
+            return BodyReadings.heartRate(this@GalaxyWearApplication)
+        }
+
+        override fun stepsToday(): StepDay? {
+            stepTracker.blocker()?.let { throw WatchActionUnavailable(it) }
+            stepTracker.ensureStarted()
+            return stepTracker.today()
         }
     }
 

@@ -19,6 +19,8 @@ import com.galaxy.wear.MainActivity
 import com.galaxy.wear.domain.HomeStatus
 import com.galaxy.wear.sensing.InterruptibilityMonitor
 import com.galaxy.wear.sensing.InterruptibilityReport
+import com.galaxy.wear.sensing.AndroidWatchState
+import com.galaxy.wear.sensing.WatchState
 import com.galaxy.wear.sensing.InterruptibilityUplinkPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -48,15 +50,35 @@ class GalaxyWearService : LifecycleService() {
          * Android 12+ 不许后台应用启动前台服务,抛 `ForegroundServiceStartNotAllowedException`。
          * 所以失败是预期内的情况,返回 false 由调用方决定怎么办,不在这里吞成一行日志。
          */
-        fun start(context: Context): Boolean = try {
+        fun start(context: Context, fromVisibleUi: Boolean = false): Boolean = try {
             androidx.core.content.ContextCompat.startForegroundService(
-                context, Intent(context, GalaxyWearService::class.java)
+                context,
+                Intent(context, GalaxyWearService::class.java).putExtra(EXTRA_FROM_VISIBLE_UI, fromVisibleUi),
             )
             true
         } catch (e: Exception) {
             Log.w(TAG, "常驻服务没拉起来: ${e.message}")
             false
         }
+
+        /** 起服务的是手表上 App 自己可见的界面:可以带上 health 类型(见 [ForegroundTypes])。开机自启不是。 */
+        const val EXTRA_FROM_VISIBLE_UI = "com.galaxy.wear.FROM_VISIBLE_UI"
+
+        /** 服务此刻以哪些类型在前台;没在跑是 null。 */
+        @Volatile
+        var runningTypes: Set<ForegroundTypes.Kind>? = null
+            private set
+
+        /** 回到 App 界面时调:身体传感器权限是服务起来之后才给的(或服务是在后台重启的),从界面再起一次把 health 补上。 */
+        fun upgradeIfNeeded(context: Context) {
+            if (ForegroundTypes.needsUpgrade(Build.VERSION.SDK_INT, bodySensorsGranted(context), runningTypes)) {
+                start(context, fromVisibleUi = true)
+            }
+        }
+
+        private fun bodySensorsGranted(context: Context): Boolean =
+            androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.BODY_SENSORS) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
 
         const val TAG = "GalaxyWearService"
 
@@ -110,7 +132,7 @@ class GalaxyWearService : LifecycleService() {
         // CRITICAL-FIX: startForeground() MUST be called every time — skipping it
         // causes ForegroundServiceDidNotStartInTimeException (5s ANR) on Android 12+.
         // isRunning only guards observer launch, not the foreground notification.
-        startForeground()
+        startForeground(fromVisibleUi = intent?.getBooleanExtra(EXTRA_FROM_VISIBLE_UI, false) == true)
 
         synchronized(this) {
             if (!isRunning) {
@@ -195,33 +217,54 @@ class GalaxyWearService : LifecycleService() {
         return builder.build()
     }
 
-    private fun startForeground() {
+    /**
+     * 起前台,类型见 [ForegroundTypes]。带 health 起不来(系统认为 App 不在前台)就退回不带 health 的类型 ——
+     * 不能让常驻服务因为多要一个类型而起不来(那样 5 秒后就是 ForegroundServiceDidNotStartInTimeException)。
+     */
+    private fun startForeground(fromVisibleUi: Boolean) {
         val notification = buildNotification(
             title = "Galaxy",
             text = "手表智能体运行中",
             showDisconnectAction = true
         )
-
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                // Android 14+:用 specialUse。dataSync 在 Android 15 起每 24 小时只许跑 6 小时,
-                // 到点系统调 onTimeout,服务不停就抛 RemoteServiceException 把整个应用崩掉;
-                // 而且 BOOT_COMPLETED 接收器不许启动 dataSync。这个服务的本职是「常驻、
-                // 保持到网关的连接」,正好是 dataSync 的限制要挡的那种用法。
-                startForeground(
-                    NOTIFICATION_ID, notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-                )
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
-                    NOTIFICATION_ID, notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                )
-            } else {
-                startForeground(NOTIFICATION_ID, notification)
-            }
+        val sdk = Build.VERSION.SDK_INT
+        val wanted = ForegroundTypes.forWatch(sdk, bodySensorsGranted(this), fromVisibleUi)
+        runningTypes = try {
+            startForegroundAs(notification, wanted)
+            wanted
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to start foreground: ${e.message}")
+            val plain = ForegroundTypes.plain(sdk)
+            if (wanted == plain) {
+                Log.e(TAG, "Failed to start foreground: ${e.message}")
+                null
+            } else {
+                Log.w(TAG, "前台服务带 health 没起来(${e.message}),退回 $plain;后台测不了心率")
+                try {
+                    startForegroundAs(notification, plain)
+                    plain
+                } catch (e2: Exception) {
+                    Log.e(TAG, "Failed to start foreground: ${e2.message}")
+                    null
+                }
+            }
+        }
+    }
+
+    private fun startForegroundAs(notification: android.app.Notification, kinds: Set<ForegroundTypes.Kind>) {
+        if (kinds.isEmpty() || Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification)
+        } else {
+            startForeground(NOTIFICATION_ID, notification, typeBits(kinds))
+        }
+    }
+
+    // 常量是编译期整数;每个只在 ForegroundTypes 为支持它的系统版本选中时才会用到
+    @android.annotation.SuppressLint("InlinedApi")
+    private fun typeBits(kinds: Set<ForegroundTypes.Kind>): Int = kinds.fold(0) { bits, kind ->
+        bits or when (kind) {
+            ForegroundTypes.Kind.SPECIAL_USE -> ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            ForegroundTypes.Kind.DATA_SYNC -> ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            ForegroundTypes.Kind.HEALTH -> ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH
         }
     }
 
@@ -270,8 +313,9 @@ class GalaxyWearService : LifecycleService() {
     /**
      * 起传感 + 上行。
      *
-     * 隐私边界(所有者拍板):心率/加速度/静息基线**只在手表本地**参与运算,
+     * 隐私边界(所有者拍板):这条常驻采样里,心率/加速度/静息基线**只在手表本地**参与运算,
      * 上行的只有一个标量报告。基线也只落到本机加密偏好,不进任何同步通道。
+     * (智能体调 `heart_rate` / `steps` 是另一条路:被问到时读一次、回那一次的数,见 sensing/BodyReadings.kt。)
      *
      * 不做的事:这里**不**替上游做决定。手表只报"能不能打扰",要不要因此
      * 闭嘴是 V2 侧常驻注意力循环的事(有界延迟,不是丢弃)。
@@ -318,21 +362,24 @@ class GalaxyWearService : LifecycleService() {
     }
 
     /**
-     * UNKNOWN 也要上报:上游必须能区分"手表在,但没有传感证据"与"根本没有手表"。
-     * 节流策略会把它压到最多每心跳一条。
+     * 这块表此刻的状态跟着一条心跳上行(可打扰性在里面,见 [WatchState])。
+     * UNKNOWN 也照发:状态里没有 `interruptible`,中心就撤掉这块表上一份的判断,当作不知道。
+     * 节流策略会把它压到最多每心跳一条(屏幕、充电、通话变了也发)。
      */
     private suspend fun uplinkOnce(app: GalaxyWearApplication, report: InterruptibilityReport) {
         val now = System.currentTimeMillis()
-        if (!uplinkPolicy.shouldSend(report, now)) return
+        val readings = AndroidWatchState.read(applicationContext)
+        val others = WatchState.uplinkKey(readings)
+        if (!uplinkPolicy.shouldSend(report, now, others)) return
         if (!app.isAipClientReady()) return
         try {
-            app.aipClient.sendInterruptibility(report, now)
+            app.aipClient.sendState(WatchState.build(report, readings), now)
             // 只有真发出去了才记账,失败时下一拍会重试。
-            uplinkPolicy.recordSent(report, now)
+            uplinkPolicy.recordSent(report, now, others)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w(TAG, "可打扰性上报失败(下一拍重试): ${e.message}")
+            Log.w(TAG, "状态上报失败(下一拍重试): ${e.message}")
         }
     }
 
@@ -347,6 +394,7 @@ class GalaxyWearService : LifecycleService() {
     override fun onDestroy() {
         stopInterruptibility()
         super.onDestroy()
+        runningTypes = null
     }
 
     private fun updateNotification(text: String) {

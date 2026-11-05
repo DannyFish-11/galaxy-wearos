@@ -155,6 +155,9 @@ class PairClaimClient(private val context: Context) {
                         put("device_id", deviceId)
                         if (!deviceName.isNullOrBlank()) put("name", deviceName)
                         put("device_type", "wearos")
+                        // App 里嵌了用户态 tailnet 进程(Wear OS 装不了 VpnService 类 App),第一次加入要一把钥匙。
+                        // 中心看这一项决定发不发,不看设备类型(V2 core/routes/pairing._TAILNET_MODES)。
+                        put("tailnet", "embedded")
                     }
                 )
             }

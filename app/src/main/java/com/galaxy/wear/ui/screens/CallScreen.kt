@@ -101,6 +101,18 @@ fun CallScreen(isAmbient: Boolean = false, onBack: () -> Unit) {
                 )
             }
 
+            // 通话里交给智能体的事做到哪了:「在做:… / 做完了:…」。结果 AI 也会在电话里说。
+            val agentTask = ui?.agentTask.orEmpty()
+            if (agentTask.isNotEmpty() && !isAmbient) {
+                Text(
+                    text = agentTask,
+                    style = MaterialTheme.typography.caption2,
+                    color = Color(0xFF81C784),
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                )
+            }
+
             // 通话在服务里结束时服务会马上停、控制器随之置空，界面读不到 ui 了；
             // 这时用服务留下的 lastFailure。
             val failure = ui?.takeIf { it.state == CallState.ENDED }?.let { CallEndNotice.of(it.endedReason) }

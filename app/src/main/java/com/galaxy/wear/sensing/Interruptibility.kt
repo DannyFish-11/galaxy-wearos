@@ -1,20 +1,14 @@
 package com.galaxy.wear.sensing
 
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.add
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-
 /**
  * 可打扰性(interruptibility)—— 手表回答"现在能不能打扰他",而**不**交出身体数据。
  *
  * ## 隐私契约(所有者拍板)
  * 心率/运动/睡眠这些原始信号**只在手表本地参与运算**,任何时候都不上传。
- * 离开手表的只有 [InterruptibilityReport] 这一个标量报告:一个 0..1 的分数、
- * 一个粗粒度档位、若干**不含数值的**原因标签、以及一个置信度。
- * `InterruptibilityWireContractTest` 把这条契约钉成测试:上行 JSON 的键集合
- * 必须与允许集合**完全相等**,多一个键(哪怕叫 `bpm`)测试就红。
+ * 报告本身也不离开手表:上行的是 [WatchState] 拼的设备状态 —— 一个粗粒度档位
+ * (`interruptible`)和一句**不含数值的**原因(`note`),跟着心跳走。
+ * `WatchStateTest` 把这条契约钉成测试:状态的键只能是 `DeviceState` 那几个,
+ * 多一个键(哪怕叫 `bpm`)测试就红。
  *
  * ## 为什么需要它
  * 常驻注意力循环(V2 侧 `core/ambient_attention_loop.py`)的决策提示词里写着
@@ -87,7 +81,7 @@ data class InterruptibilitySignals(
 )
 
 /**
- * 上行报告 —— 这是**唯一**离开手表的东西。
+ * 手表本地算出的报告。离开手表的是它的档位和原因的说法(见 [WatchState]),分数和置信度不上行。
  *
  * @param score      0.0 = 绝对不要打扰,1.0 = 随便打扰。
  * @param band       粗粒度档位,给不想处理浮点的消费方用。
@@ -104,29 +98,4 @@ data class InterruptibilityReport(
 ) {
     /** 只有 BLOCKED 是"明确别打扰";UNKNOWN 是"不知道",两者含义不同,别合并。 */
     val isBlocked: Boolean get() = band == InterruptibilityBand.BLOCKED
-}
-
-/** 上行 JSON 的**完整**允许键集合。改这里必须同时改隐私契约测试。 */
-val INTERRUPTIBILITY_WIRE_KEYS: Set<String> =
-    setOf("score", "band", "reasons", "confidence", "device", "timestamp")
-
-/**
- * 序列化成上行载荷。
- *
- * 刻意做成**纯 JVM 函数**(不碰 Android),这样隐私契约能在 `:app:testDebugUnitTest`
- * 里被真跑一遍,而不是靠人工审阅保证。
- *
- * @param timestampMs 由调用方注入,便于测试确定性。
- */
-fun InterruptibilityReport.toWirePayload(
-    deviceId: String = "wear_os",
-    timestampMs: Long,
-): JsonObject = buildJsonObject {
-    // 分数保留两位:再多的精度对决策没有意义,却会把细微的生理波动泄露出去。
-    put("score", Math.round(score * 100f) / 100f)
-    put("band", band.wire)
-    put("reasons", buildJsonArray { reasons.forEach { add(it.wire) } })
-    put("confidence", Math.round(confidence * 100f) / 100f)
-    put("device", deviceId)
-    put("timestamp", timestampMs)
 }

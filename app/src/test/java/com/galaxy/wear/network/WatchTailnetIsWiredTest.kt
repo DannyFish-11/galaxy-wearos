@@ -50,6 +50,13 @@ class WatchTailnetIsWiredTest {
     }
 
     @Test
+    fun `pairing says the app joins the tailnet itself so the center hands it a key`() {
+        // 中心按配对请求里声明的进网方式发一次性钥匙,不看设备类型(V2 core/routes/pairing._TAILNET_MODES)
+        val claim = read("$app/auth/PairClaimClient.kt").substringAfter("PATH_CLAIM)").substringBefore("HTTP_TOO_MANY_REQUESTS")
+        assertTrue("配对请求里没说 App 自己进 tailnet —— 中心不会发钥匙,出门就连不回来", claim.contains("put(\"tailnet\", \"embedded\")"))
+    }
+
+    @Test
     fun `the key travels in the environment the daemon reads`() {
         assertTrue(read("tailnet/main.go").contains("os.Getenv(\"TS_AUTHKEY\")"))
         assertTrue(read("$app/network/TailnetDaemon.kt").contains("put(\"TS_AUTHKEY\""))

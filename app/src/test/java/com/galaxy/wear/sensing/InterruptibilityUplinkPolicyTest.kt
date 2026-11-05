@@ -90,4 +90,16 @@ class InterruptibilityUplinkPolicyTest {
         assertFalse(policy.shouldSend(unknown, InterruptibilityUplinkPolicy.HEARTBEAT_MS - 1))
         assertTrue(policy.shouldSend(unknown, InterruptibilityUplinkPolicy.HEARTBEAT_MS))
     }
+
+    @Test
+    fun `屏幕、充电、通话这些别的状态变了也发——它们跟着同一条心跳上行`() {
+        val policy = InterruptibilityUplinkPolicy()
+        val r = report(0.5f)
+        val screenOn = WatchState.Readings(battery = 0.7f, screenOn = true)
+        policy.recordSent(r, 0L, screenOn)
+
+        assertFalse(policy.shouldSend(r, 1_000L, screenOn.copy()))
+        assertTrue(policy.shouldSend(r, 1_000L, screenOn.copy(screenOn = false)))
+        assertTrue(policy.shouldSend(r, 1_000L, screenOn.copy(charging = true)))
+    }
 }

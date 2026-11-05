@@ -6,7 +6,7 @@ Galaxy 在手腕上的那一端。
 
 - 你对它说的话（语音、通知上的回复）→ 交给智能体；
 - 智能体的话（消息、向你提问、需要你拍板的决策）→ 送到你的手腕上，你答，答复回到智能体；
-- 手表向智能体**登记**并报告「我能替你做什么」，智能体可以经 `devices__invoke` 让手表做事；
+- 手表向智能体**登记**，用一份设备自述说清「我是什么、能替你做什么、此刻做不了什么」，智能体自己看着决定让谁做什么（经 `devices__invoke` 让手表做事）；
 - 和智能体**通话**；
 - 出门在外，靠 App 里内嵌的用户态 tailnet 进程直连智能体（Wear OS 装不了系统 VPN）。
 
@@ -15,16 +15,28 @@ Galaxy 在手腕上的那一端。
 
 ## 手表能替智能体做什么
 
-登记之后，手表向智能体报告这三个动作（封闭清单，见 `domain/AgentCommand.kt`）：
+登记之后，手表在能力上报里带一份设备自述（`self_description`，V2 `contracts/device_self_v1.json`）：一句形态描述、
+做得了的动作（每个动作做了会怎样、要什么参数）、此刻做不了的动作和原因，以及几样设备级声明（能回答智能体的提问、
+出门靠内嵌 tailnet）。中心不按「这是手表」做任何判断，只读这份自述。动作是封闭清单（见 `domain/AgentCommand.kt`）：
 
 | 动作 | 作用 | 说明 |
 |---|---|---|
 | `notify` | 弹一条消息通知 | 通知权限被拒时如实回失败，不回「已送达」 |
 | `haptic` | 震一下 | 只放行「提醒类」触感；点按确认这类伴随用户自己动作的反馈不能由智能体触发 |
-| `get_status` | 报告手表当前状态 | 连接状态、应用版本、通知权限是否可用 |
+| `get_status` | 报告手表当前状态 | 电量、是否在充电、连接状态、应用版本、通知权限是否可用 |
+| `heart_rate` | 现测一次心率 | 测几秒、取中间值；表没戴好如实回「没测到」。要「身体传感器」权限 |
+| `steps` | 今天走了多少步 | 带上从几点开始算的（今天第一次读到计步数之前的步算不进来）。要「体能活动」权限 |
 
-同一个 `command_id` 只执行一次；输入有长度上限；失败回原因而不是忽略。
-另外手表会把「现在能不能打扰他」（可打扰性，一个标量报告，不含任何身体数据）上报给智能体。
+没有传感器、没给权限的动作不进 `actions`，进 `unavailable` 并写明原因（智能体照实告诉你缺什么、去哪打开）；
+用户在设置里改了权限，回到 App 时重报。智能体主动想跟你说的话，也走手表自己的 `notify` 动作。
+同一个 `command_id` 只执行一次（测心率期间重发的也只测一次）；输入有长度上限；失败回原因而不是忽略。
+
+**此刻的状态由手表自己报**，跟着心跳走（`payload.state`，V2 `contracts/device_state_v1.json`）：电量、充没充电、
+屏幕亮不亮、在不在通话、能不能打扰，外加一句原因（比如「极可能在睡」）。每一份都是此刻的全部，中心整份替换；
+手表说不准的（比如戴没戴着，现在测不出）就不报，中心当不知道，不替你猜。
+
+身体数据：心率、运动、睡眠这些原始信号只在手表本地参与判断「能不能打扰」，离开手表的只有上面那几个键和一句只有词、
+没有数值的原因。心率、步数只在智能体调 `heart_rate` / `steps` 时读一次、回那一次的数；不想让智能体读，就不给对应权限。
 
 ## 支持的设备
 
@@ -103,8 +115,11 @@ AIP v3 over WebSocket（`/ws/device/{device_id}`），消息结构来自共享�
 ```jsonc
 // 认证后登记（令牌在顶层）
 {"version":"3.0","type":"device_register","device_id":"…","token":"…","device_type":"wearos","platform":"wearos", "payload":{…}}
-// 报能力（supported_actions 在顶层）
-{"version":"3.0","type":"capability_report","device_id":"…","supported_actions":["notify","haptic","get_status"]}
+// 报能力：设备自述 self_description（V2 以它为准）；supported_actions 等散字段过渡期照发
+{"version":"3.0","type":"capability_report","device_id":"…","supported_actions":["notify","haptic","get_status"],
+ "self_description":{"schema":"device_self/1","kind":"wearos","about":"戴在手腕上的手表……","actions":[…],"unavailable":[…],"declares":{…}}}
+// 心跳带此刻的状态（整份替换上一份；不知道的键不带）
+{"version":"3.0","type":"heartbeat","device_id":"…","payload":{"state":{"battery":0.62,"charging":false,"screen_on":true,"interruptible":"blocked","note":"极可能在睡"}}}
 // 一问一答的语音；相关 id 用 correlation_id
 {"type":"command","command":"voice_query","correlation_id":"cmd_7","payload":{"text":"开灯","source":"wear_os","session_id":"…"}}
 // 回答一条决策
@@ -126,7 +141,7 @@ galaxy-wearos/
 │   ├── call/                      # 实时通话（WebRTC，前台服务承载）
 │   ├── conversation/              # 会话记录
 │   ├── network/                   # 内嵌 tailnet 进程、连接路径
-│   ├── sensing/                   # 可打扰性估计（心率/运动只在本地运算）
+│   ├── sensing/                   # 此刻的状态与可打扰性（心率/运动只在本地运算，随心跳报）
 │   ├── service/                   # 常驻前台服务、通知
 │   ├── receiver/                  # 开机自启、通知回复
 │   ├── tile/                      # 表盘 Tile
